@@ -6,8 +6,6 @@ class Core:
 
     def __init__(self):
         self._set_ticker_list()
-        self._start()
-
 
     def _set_ticker_list(self):
         if os.path.exists("my_stock_list.csv") and os.path.getsize("my_stock_list.csv") > 0:
@@ -18,14 +16,22 @@ class Core:
             self.tickers_list = ["AAPL", "NVDA", "GOOG"]
 
     def get_ticker_list(self): 
+        data_list = []
         for current_ticker in self.tickers_list:
             dat = yf.Ticker(current_ticker)
-
-            symbol = dat.info["symbol"]
-            price_range = dat.info["regularMarketDayRange"]
-            currency = dat.info["financialCurrency"]
-            # print(f"{symbol}: {price_range} {currency}")
-            return (symbol, price_range, currency)
+            
+            # Using get() to handle missing keys gracefully
+            info = dat.info
+            symbol = info.get("symbol", current_ticker)
+            price_range = info.get("regularMarketDayRange", "N/A")
+            currency = info.get("financialCurrency", "N/A")
+            
+            data_list.append({
+                "symbol": symbol,
+                "price_range": price_range,
+                "currency": currency
+            })
+        return data_list
 
              
 
