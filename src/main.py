@@ -2,6 +2,12 @@ import time
 from core import Core
 from cli import CLI
 
+#
+#   TODO: 
+#   1.- Add price change percentage(1 day, 30 days, 1 yr, etc...)
+#   2.- 
+#
+
 def main():
     # Initialize Core and CLI
     core = Core()
