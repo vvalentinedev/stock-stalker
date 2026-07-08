@@ -7,7 +7,7 @@ class CLI:
 
     def _print_header(self):
         print("\n" + "="*40)
-        print(f"{'Symbol':<6} | {'Price Range':<20} | {'Currency':<10}")
+        print(f"{'Symbol':<6} | {'Price Range':<20} | {'Currency':<8} | {'5d':<4} | {'1mo':<4} | {'ytd':<4} | {'1y':<4} | {'5y':<4}")
         print("-" * 40)
 
     def display_stock_data(self, data_list):
@@ -17,6 +17,6 @@ class CLI:
             symbol = item.get("symbol", "N/A")
             price_range = item.get("price_range", "N/A")
             currency = item.get("currency", "N/A")
-            print(f"{symbol:<6} | {price_range:<20} | {currency:<10}")
+            print(f"{symbol:<6} | {price_range:<20} | {currency:<8}")
         print("="*40)
         print(f"\nNext update in {self.interval} seconds...")
