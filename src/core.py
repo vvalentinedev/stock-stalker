@@ -27,12 +27,44 @@ class Core:
         symbol = info.get("symbol", current_ticker)
         price_range = info.get("regularMarketDayRange", "N/A")
         currency = info.get("financialCurrency", "N/A")
+        price_history = self._get_price_history
         
         return {
             "symbol": symbol,
             "price_range": price_range,
-            "currency": currency
+            "currency": currency,
+            "5d": price_history["5d"],
+            "1mo": price_history["1mo"],
+            "ytd": price_history["ytd"],
+            "1y": price_history["1y"],
+            "5y": price_history["5y"],
         }
+    
+    def _get_price_history(self, ticker, periods: dict):
+        results = {}
+
+        for period in periods:
+            hist = yf.download(
+                ticker,
+                period=period,
+                auto_adjust=True,
+                progress=False,
+                group_by="column",
+            )
+
+            if hist.empty or len(hist) < 2:
+                results[period] = "N/A"
+                continue
+
+            close = hist["Close"].squeeze()
+
+            start = close.iloc[0]
+            end = close.iloc[-1]
+
+            change = ((end - start) / start) * 100
+            results[period] = f"{change:.2f}%"
+
+        return results
 
     def get_ticker_list(self): 
         with ThreadPoolExecutor() as executor:
