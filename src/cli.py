@@ -18,7 +18,7 @@ class CLI:
             price_range = item.get("price_range", "N/A")
             currency = item.get("currency", "N/A")
             fiveday_change = item.get("5d", "N/A")
-            onemonth_change = item.get("1m", "N/A")
+            onemonth_change = item.get("1mo", "N/A")
             yeartodate_change = item.get("ytd", "N/A")
             oneyear_change = item.get("1y", "N/A")
             fiveyear_change = item.get("5y", "N/A")
