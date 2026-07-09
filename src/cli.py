@@ -6,9 +6,9 @@ class CLI:
         self.interval = interval
 
     def _print_header(self):
-        print("\n" + "="*40)
-        print(f"{'Symbol':<6} | {'Price Range':<20} | {'Currency':<8} | {'5d':<4} | {'1mo':<4} | {'ytd':<4} | {'1y':<4} | {'5y':<4}")
-        print("-" * 40)
+        print("\n" + "="*107)
+        print(f"{'Symbol':<6} | {'Price Range':<20} | {'Currency':<8} | {'5d':<10} | {'1mo':<10} | {'ytd':<10} | {'1y':<10} | {'5y':<10} |")
+        print("-" * 107)
 
     def display_stock_data(self, data_list):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -17,6 +17,11 @@ class CLI:
             symbol = item.get("symbol", "N/A")
             price_range = item.get("price_range", "N/A")
             currency = item.get("currency", "N/A")
-            print(f"{symbol:<6} | {price_range:<20} | {currency:<8}")
-        print("="*40)
+            fiveday_change = item.get("5d", "N/A")
+            onemonth_change = item.get("1m", "N/A")
+            yeartodate_change = item.get("ytd", "N/A")
+            oneyear_change = item.get("1y", "N/A")
+            fiveyear_change = item.get("5y", "N/A")
+            print(f"{symbol:<6} | {price_range:<20} | {currency:<8} | {fiveday_change:<10} | {onemonth_change:<10} | {yeartodate_change:<10} | {oneyear_change:<10} | {fiveyear_change:<10} |")
+        print("="*107)
         print(f"\nNext update in {self.interval} seconds...")
