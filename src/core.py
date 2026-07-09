@@ -1,4 +1,5 @@
 import yfinance as yf
+import pandas as pd
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,7 +28,7 @@ class Core:
         symbol = info.get("symbol", current_ticker)
         price_range = info.get("regularMarketDayRange", "N/A")
         currency = info.get("financialCurrency", "N/A")
-        price_history = self._get_price_history
+        price_history = self._get_price_history(current_ticker, ["5d", "1mo", "ytd", "1y", "5y"])
         
         return {
             "symbol": symbol,
@@ -40,7 +41,7 @@ class Core:
             "5y": price_history["5y"],
         }
     
-    def _get_price_history(self, ticker, periods: dict):
+    def _get_price_history(self, ticker, periods: list[str]):
         results = {}
 
         for period in periods:
@@ -56,12 +57,13 @@ class Core:
                 results[period] = "N/A"
                 continue
 
-            close = hist["Close"].squeeze()
+            close = hist["Close"]
 
-            start = close.iloc[0]
-            end = close.iloc[-1]
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
 
-            change = ((end - start) / start) * 100
+            change = ((close.iloc[-1] - close.iloc[0]) / close.iloc[0]) * 100
+
             results[period] = f"{change:.2f}%"
 
         return results
