@@ -2,12 +2,15 @@ import yfinance as yf
 import pandas as pd
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 class Core:
     tickers_list = []
 
-    def __init__(self):
+    # TODO: add validation so only valid periods are accepted as atribute
+    def __init__(self, period: str = "1y"):
         self._set_ticker_list()
+        self.period = period
 
     def _set_ticker_list(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,53 +23,80 @@ class Core:
             # if my_stock_list.csv doesn't exist or is empty, a default ticker list is loaded.
             self.tickers_list = ["AAPL", "NVDA", "GOOG"]
 
-    def _fetch_single_ticker(self, current_ticker):
-        dat = yf.Ticker(current_ticker)
-        
-        # Using get() to handle missing keys gracefully
-        info = dat.info
-        symbol = info.get("symbol", current_ticker)
-        price_range = info.get("regularMarketDayRange", "N/A")
-        currency = info.get("financialCurrency", "N/A")
-        price_history = self._get_price_history(current_ticker, ["5d", "1mo", "ytd", "1y", "5y"])
-        
-        return {
-            "symbol": symbol,
-            "price_range": price_range,
-            "currency": currency,
-            "5d": price_history["5d"],
-            "1mo": price_history["1mo"],
-            "ytd": price_history["ytd"],
-            "1y": price_history["1y"],
-            "5y": price_history["5y"],
+    # TODO: refactor function so that it returns avg price of latest trading day, as well as the rest of the data we want to display
+    def _fetch_single_ticker(self, current_ticker:str) -> dict:
+        hist = yf.download(
+            current_ticker,
+            period = self.period,
+            auto_adjust = True, 
+            progress = False,
+            group_by = "date",
+        )
+
+        # TODO: fix magic numbers in order to make code clearer 
+        highest_point = hist.iloc[-1].iloc[1]
+        lowest_point = hist.iloc[-1].iloc[2]
+        avg_price = (highest_point + lowest_point) / 2
+
+        ticker_data = {
+            "symbol" : current_ticker,
+            "average" : avg_price,
         }
-    
-    def _get_price_history(self, ticker, periods: list[str]):
-        results = {}
 
-        for period in periods:
-            hist = yf.download(
-                ticker,
-                period=period,
-                auto_adjust=True,
-                progress=False,
-                group_by="column",
-            )
+        match self.period:
+            case "5d":
+                fivedayago_change = self._get_percentage_change(hist, 0, avg_price)
+                ticker_data = ticker_data | { "5d":fivedayago_change }
+            case "1mo":
+                fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
+                onemonth_change = self._get_percentage_change(hist, 0, avg_price)
+                ticker_data = ticker_data | {
+                    "5d":fivedayago_change,
+                    "1mo":onemonth_change,
+                }
+            case "ytd":
+                fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
+                onemonth_change = self._get_percentage_change(hist, -21, avg_price)
+                ytd_change = self._get_percentage_change(hist, 0, avg_price)
+                ticker_data = ticker_data | {
+                    "5d":fivedayago_change,
+                    "1mo":onemonth_change,
+                    "ytd":ytd_change,
+                }
+            case "1y":
+                fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
+                onemonth_change = self._get_percentage_change(hist, -21, avg_price)
+                ytd_offset = datetime.now().strftime("%j")
+                ytd_change = self._get_percentage_change(hist, ytd_offset, avg_price)
+                oneyear_change = self._get_percentage_change(hist, 0, avg_price)
+                ticker_data = ticker_data | {
+                    "5d":fivedayago_change,
+                    "1mo":onemonth_change,
+                    "ytd":ytd_change,
+                    "1y":oneyear_change,
+                }
+            case "5y":
+                fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
+                onemonth_change = self._get_percentage_change(hist, -21, avg_price)
+                ytd_offset = datetime.now().strftime("%j")
+                ytd_change = self._get_percentage_change(hist, ytd_offset, avg_price)
+                oneyear_change = self._get_percentage_change(hist, -252, avg_price)
+                fiveyear_change = self._get_percentage_change(hist, 0, avg_price)
+                ticker_data = ticker_data | {
+                    "5d":fivedayago_change,
+                    "1mo":onemonth_change,
+                    "ytd":ytd_change,
+                    "1y":oneyear_change,
+                    "5y":fiveyear_change
+                }
 
-            if hist.empty or len(hist) < 2:
-                results[period] = "N/A"
-                continue
+        return ticker_data
 
-            close = hist["Close"]
+    def _get_percentage_change(self, hist:pd.DataFrame, offset:int, current_price:int) -> str:
+        average = (hist.iloc[offset].iloc[1] + hist.iloc[offset].iloc[2]) / 2
+        percentage_change = ((current_price - average) / average) * 100
 
-            if isinstance(close, pd.DataFrame):
-                close = close.iloc[:, 0]
-
-            change = ((close.iloc[-1] - close.iloc[0]) / close.iloc[0]) * 100
-
-            results[period] = f"{change:.2f}%"
-
-        return results
+        return f"{percentage_change:.2f}%"
 
     def get_ticker_list(self): 
         with ThreadPoolExecutor() as executor:
