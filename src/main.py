@@ -4,14 +4,14 @@ from cli import CLI
 
 #
 #   TODO: 
-#   1.- Add price change percentage(1 day, 30 days, 1 yr, etc...)
-#   2.- Add a CLI argument to add and edit elements in data/my_stock_list.csv
+#   1.- Add a CLI argument to add and edit elements in data/my_stock_list.csv
 #
 
 def main():
+    
     # Initialize Core and CLI
     core = Core()
-    cli = CLI(interval=60)
+    cli = CLI(interval=60, period="1y")
 
     try:
         while True:

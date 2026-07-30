@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import os
+import math
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -23,7 +24,6 @@ class Core:
             # if my_stock_list.csv doesn't exist or is empty, a default ticker list is loaded.
             self.tickers_list = ["AAPL", "NVDA", "GOOG"]
 
-    # TODO: refactor function so that it returns avg price of latest trading day, as well as the rest of the data we want to display
     def _fetch_single_ticker(self, current_ticker:str) -> dict:
         hist = yf.download(
             current_ticker,
@@ -34,8 +34,12 @@ class Core:
         )
 
         # TODO: fix magic numbers in order to make code clearer 
-        highest_point = hist.iloc[-1].iloc[1]
-        lowest_point = hist.iloc[-1].iloc[2]
+
+        day_off = 0
+        if math.isnan(hist.iloc[-1].iloc[1]): day_off = 1
+
+        highest_point = hist.iloc[-1 - day_off].iloc[1]
+        lowest_point = hist.iloc[-1 - day_off].iloc[2]
         avg_price = (highest_point + lowest_point) / 2
 
         ticker_data = {
@@ -67,7 +71,7 @@ class Core:
                 fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
                 onemonth_change = self._get_percentage_change(hist, -21, avg_price)
                 ytd_offset = datetime.now().strftime("%j")
-                ytd_change = self._get_percentage_change(hist, ytd_offset, avg_price)
+                ytd_change = self._get_percentage_change(hist, int(ytd_offset), avg_price)
                 oneyear_change = self._get_percentage_change(hist, 0, avg_price)
                 ticker_data = ticker_data | {
                     "5d":fivedayago_change,
@@ -79,7 +83,7 @@ class Core:
                 fivedayago_change = self._get_percentage_change(hist, -5, avg_price)
                 onemonth_change = self._get_percentage_change(hist, -21, avg_price)
                 ytd_offset = datetime.now().strftime("%j")
-                ytd_change = self._get_percentage_change(hist, ytd_offset, avg_price)
+                ytd_change = self._get_percentage_change(hist, int(ytd_offset), avg_price)
                 oneyear_change = self._get_percentage_change(hist, -252, avg_price)
                 fiveyear_change = self._get_percentage_change(hist, 0, avg_price)
                 ticker_data = ticker_data | {
@@ -98,9 +102,12 @@ class Core:
 
         return f"{percentage_change:.2f}%"
 
-    def get_ticker_list(self): 
-        with ThreadPoolExecutor() as executor:
-            data_list = list(executor.map(self._fetch_single_ticker, self.tickers_list))
+    def get_ticker_list(self) -> list[dict]: 
+        data_list = []
+        for curr in self.tickers_list:
+            data_list.append(self._fetch_single_ticker(curr))
+        #with ThreadPoolExecutor() as executor:
+        #    data_list = list(executor.map(self._fetch_single_ticker, self.tickers_list))
             
         return data_list
 

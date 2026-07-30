@@ -29,6 +29,10 @@ class CLI:
         print(header)
         print("-" * 107)
 
+    def print_header_debug(self, data_list):
+        for curr in data_list:
+            print(curr)
+
     def display_stock_data(self, data_list):
         os.system('cls' if os.name == 'nt' else 'clear')
         self._print_header()
@@ -36,7 +40,7 @@ class CLI:
             symbol = item.get("symbol", "N/A")
             avg_price = item.get("average", "N/A")
 
-            STATIC_ROW_SEGMENT = f"{symbol:<6} | {avg_price:<20} |"
+            STATIC_ROW_SEGMENT = f"{symbol:<6} | {avg_price:<20}"
             variable_row_segment = ""
             match self.period:
                 case "5d":
