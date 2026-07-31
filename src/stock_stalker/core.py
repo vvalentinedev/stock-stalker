@@ -10,10 +10,10 @@ class Core:
 
     # TODO: add validation so only valid periods are accepted as atribute
     def __init__(self, period: str = "1y"):
-        self._set_ticker_list()
+        self._get_ticker_list()
         self.period = period
 
-    def _set_ticker_list(self):
+    def _get_ticker_list(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(base_dir, "..", "data", "my_stock_list.csv")
         
