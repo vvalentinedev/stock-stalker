@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-stalker"
+version = "0.1.0"
+description = "CLI tool for stock analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "yfinance",
+    "pandas",
+]
+
+[project.scripts]
+stock-stalker = "stock_stalker.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
