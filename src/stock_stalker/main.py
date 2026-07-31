@@ -1,4 +1,5 @@
 import time
+import sys
 from .core import Core
 from .cli import CLI
 
@@ -9,15 +10,22 @@ from .cli import CLI
 #   3. Refactor CLI class so that placeholder values appear before data is obtained
 
 def main():
+    ticker_list = []
+    my_args = sys.argv
+    if len(my_args) > 1: 
+        if my_args[1] == "--newlist" and len(my_args) > 2:
+            for ticker in my_args[2:]:
+                ticker_list.append(ticker)
     
-    # Initialize Core and CLI
-    core = Core()
+    my_core = Core()
+    if ticker_list:
+        my_core.tickers_list = ticker_list
     cli = CLI(interval=60, period="1y")
 
     try:
         while True:
             # Fetch data from Core
-            ticker_data = core.get_ticker_list()
+            ticker_data = my_core.get_ticker_list()
             
             # Use CLI to display the layout
             cli.display_stock_data(ticker_data)
