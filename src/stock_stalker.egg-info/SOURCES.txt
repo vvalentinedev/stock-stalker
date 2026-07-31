@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/stock_stalker.egg-info/PKG-INFO
+src/stock_stalker.egg-info/SOURCES.txt
+src/stock_stalker.egg-info/dependency_links.txt
+src/stock_stalker.egg-info/entry_points.txt
+src/stock_stalker.egg-info/requires.txt
+src/stock_stalker.egg-info/top_level.txt
+tests/test_core.py

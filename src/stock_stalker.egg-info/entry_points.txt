@@ -1,0 +1,2 @@
+[console_scripts]
+stock-stalker = stock_stalker.cli:main

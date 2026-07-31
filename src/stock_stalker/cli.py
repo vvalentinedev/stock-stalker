@@ -1,7 +1,7 @@
 import time
 import os
 
-# TODO: refactor class so that it displays columns based on how far you want to go on price history 
+# TODO: Repair row/column alignment
 class CLI:
     def __init__(self, interval: int = 60, period: str = "1y"):
         self.interval = interval

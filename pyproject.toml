@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-stock-stalker = "stock_stalker.main:main"
+stock-stalker = "main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
