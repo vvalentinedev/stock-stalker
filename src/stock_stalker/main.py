@@ -1,6 +1,6 @@
 import time
-from core import Core
-from cli import CLI
+from .core import Core
+from .cli import CLI
 
 #
 #   TODO: 
