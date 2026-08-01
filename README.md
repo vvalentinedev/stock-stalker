@@ -9,4 +9,7 @@ pipx install git+https://github.com/vvalentinedev/stock-stalker.git
 ```
 
 # Instructions
-Write you list of tickers in the *my_stock_list.csv* file inside the **data** folder (soon to be changed for a better method!!!).
+You can pass the --newlist argument to define a custom stock list (as many tickers as you want)
+```
+stock-stalker --newlist <stock-name>
+```
