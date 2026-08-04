@@ -138,5 +138,9 @@ class Core:
             
         return data_list
 
-             
+    def append_item_to_ticker_list(self, ticker: str): 
+        self.tickers_list.append(ticker)
 
+    def remove_item_from_ticker_list(self, ticker: str):
+        if ticker in self.tickers_list:
+            self.tickers_list.remove(ticker)
