@@ -40,7 +40,7 @@ class CLI:
             symbol = item.get("symbol", "N/A")
             avg_price = item.get("average", "N/A")
 
-            STATIC_ROW_SEGMENT = f"{symbol:<6} | {avg_price:<10.2f}"
+            STATIC_ROW_SEGMENT = f"{symbol:<6.6} | {avg_price:<10.2f}"
             variable_row_segment = ""
             match self.period:
                 case "5d":
