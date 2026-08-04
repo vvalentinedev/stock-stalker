@@ -5,21 +5,23 @@ from .cli import CLI
 
 #
 #   TODO: 
-#   1.- Add a CLI argument to add and edit elements in data/my_stock_list.csv
+#   1.- Ensure data persistency on my_stock_list.csv
 #   2.- Add a CLI argument to modify the period (default is 1y)
 #   3. Refactor CLI class so that placeholder values appear before data is obtained
 
 def main():
     ticker_list = []
+    modify_list = False
     my_args = sys.argv
     if len(my_args) > 1: 
         if my_args[1] == "--newlist" and len(my_args) > 2:
+            modify_list = True
             for ticker in my_args[2:]:
                 ticker_list.append(ticker)
     
     my_core = Core()
-    if ticker_list:
-        my_core.tickers_list = ticker_list
+    if modify_list:
+        my_core._set_ticker_list(ticker_list)
     cli = CLI(interval=60, period="1y")
 
     try:
