@@ -13,3 +13,8 @@ You can pass the --newlist argument to define a custom stock list (as many ticke
 ```
 stock-stalker --newlist <stock-name>
 ```
+To either add or remove items from your ticker list you can use the -remove and -append flags.
+```
+stock-stalker --newlist-append <stock-name>
+stock-stalker --newlist-remove <stock-name>
+```
