@@ -1,29 +1,80 @@
-import sys
+import argparse
 import time
 
 from .cli import CLI
 from .core import Core
+from .models import VALID_PERIODS
 
 
-def main():
-    my_args = sys.argv
-    my_core = Core()
-    pending: list[str] = []
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="stock-stalker",
+        description="Monitor your favorite stocks from Yahoo Finance.",
+        epilog="examples:\n"
+        "  stock-stalker --newlist AAPL NVDA\n"
+        "  stock-stalker --newlist-append MSFT --period 1mo\n"
+        "  stock-stalker --newlist-remove GOOG\n"
+        "  stock-stalker --period ytd --interval 30\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    targets = parser.add_mutually_exclusive_group()
+    targets.add_argument(
+        "--newlist",
+        nargs="+",
+        metavar="TICKER",
+        help="replace the tracked ticker list",
+    )
+    targets.add_argument(
+        "--newlist-append",
+        nargs="+",
+        metavar="TICKER",
+        help="add tickers to the tracked list",
+    )
+    targets.add_argument(
+        "--newlist-remove",
+        nargs="+",
+        metavar="TICKER",
+        help="remove tickers from the tracked list",
+    )
+    parser.add_argument(
+        "--period",
+        choices=VALID_PERIODS,
+        default="1y",
+        help="price history window used for changes (default: 1y)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=_positive_int,
+        default=60,
+        metavar="SECONDS",
+        help="refresh interval in seconds (default: 60)",
+    )
+    return parser
 
-    if len(my_args) > 1:
-        if my_args[1] == "--newlist" and len(my_args) > 2:
-            pending = list(my_args[2:])
-        elif my_args[1] == "--newlist-append" and len(my_args) > 2:
-            for ticker in my_args[2:]:
-                my_core.append_item_to_ticker_list(ticker)
-        elif my_args[1] == "--newlist-remove" and len(my_args) > 2:
-            for ticker in my_args[2:]:
-                my_core.remove_item_from_ticker_list(ticker)
 
-    if pending:
-        my_core.set_ticker_list(pending)
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            f"invalid interval {value!r}, expected a positive integer"
+        )
+    return parsed
 
-    cli = CLI(interval=60, period=my_core.period, clear=True)
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    my_core = Core(period=args.period)
+
+    if args.newlist is not None:
+        my_core.set_ticker_list(list(args.newlist))
+    elif args.newlist_append is not None:
+        for ticker in args.newlist_append:
+            my_core.append_item_to_ticker_list(ticker)
+    elif args.newlist_remove is not None:
+        for ticker in args.newlist_remove:
+            my_core.remove_item_from_ticker_list(ticker)
+
+    cli = CLI(interval=args.interval, period=args.period, clear=True)
 
     try:
         while True:

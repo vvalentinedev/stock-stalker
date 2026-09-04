@@ -183,3 +183,61 @@ def test_cli_does_not_clear_by_default():
         [TickerQuote(symbol="AAPL", average=10.0, changes={"5d": 0.0})]
     )
     assert cleared["n"] == 0
+
+
+def test_help_lists_all_flags(capsys):
+    import pytest as pt
+
+    from stock_stalker.main import build_parser
+
+    with pt.raises(SystemExit) as exc:
+        build_parser().parse_args(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    for flag in (
+        "--newlist",
+        "--newlist-append",
+        "--newlist-remove",
+        "--period",
+        "--interval",
+    ):
+        assert flag in out
+    assert "examples:" in out
+
+
+def test_bad_period_exits_with_error(capsys):
+    import pytest as pt
+
+    from stock_stalker.main import build_parser
+
+    with pt.raises(SystemExit) as exc:
+        build_parser().parse_args(["--period", "10y"])
+    assert exc.value.code == 2
+
+
+def test_newlist_replaces_persisted_tickers(tmp_path, monkeypatch):
+    from stock_stalker import main as main_module
+    from stock_stalker.repository import TickerRepository
+
+    repo = TickerRepository(path=tmp_path / "stocks.csv")
+    monkeypatch.setattr(
+        main_module.Core,
+        "__init__",
+        lambda self, period="1y", repository=None, provider=None: (
+            setattr(self, "_period", period)
+            or setattr(self, "_tickers", repo.load())
+            or setattr(self, "_repository", repo)
+            or setattr(self, "_provider", None)
+        ),
+    )
+    monkeypatch.setattr(
+        main_module.Core,
+        "get_quotes",
+        lambda self: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr(
+        main_module.CLI, "display_stock_data", lambda self, quotes: None
+    )
+    monkeypatch.setattr(main_module.time, "sleep", lambda seconds: None)
+    main_module.main(["--newlist", "AAPL", "MSFT"])
+    assert repo.load() == ["AAPL", "MSFT"]
