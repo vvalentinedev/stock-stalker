@@ -1,79 +1,87 @@
-import os
-from typing import Any
+import math
+import sys
+from typing import TextIO
 
-PERIOD_LABELS: dict[str, tuple[str, ...]] = {
-    "5d": ("5d",),
-    "1mo": ("5d", "1mo"),
-    "ytd": ("5d", "1mo", "ytd"),
-    "1y": ("5d", "1mo", "ytd", "1y"),
-    "5y": ("5d", "1mo", "ytd", "1y", "5y"),
-}
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+from .models import PERIOD_LABELS, VALID_PERIODS, TickerQuote
+
+
+class TableRenderer:
+    def build(self, quotes: list[TickerQuote], period: str) -> Table:
+        labels = PERIOD_LABELS[period]
+        table = Table(title="Stock Stalker", show_lines=False)
+        table.add_column("Symbol", style="bold", no_wrap=True)
+        table.add_column("Average", justify="right")
+        for label in labels:
+            table.add_column(label, justify="right")
+        for quote in quotes:
+            table.add_row(*self._row(quote, labels))
+        return table
+
+    def _row(self, quote: TickerQuote, labels: tuple[str, ...]) -> list[Text | str]:
+        if quote.error is not None or self._is_nan(quote.average):
+            cells: list[Text | str] = [
+                Text(quote.symbol, style="bold"),
+                Text("N/A", style="dim"),
+            ]
+            cells.extend(Text("N/A", style="dim") for _ in labels)
+            return cells
+        cells = [
+            Text(quote.symbol, style="bold"),
+            Text(f"{quote.average:.2f}", justify="right"),
+        ]
+        for label in labels:
+            value = quote.changes.get(label)
+            if value is None or self._is_nan(value):
+                cells.append(Text("N/A", style="dim"))
+            else:
+                style = "green" if value >= 0 else "red"
+                cells.append(Text(f"{value:.2f}%", style=style))
+        return cells
+
+    @staticmethod
+    def _is_nan(value: float) -> bool:
+        try:
+            return math.isnan(float(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
 
 
 class CLI:
-    def __init__(self, interval: int = 60, period: str = "1y"):
+    def __init__(
+        self,
+        interval: int = 60,
+        period: str = "1y",
+        clear: bool = False,
+        output: TextIO | None = None,
+        console: Console | None = None,
+        renderer: TableRenderer | None = None,
+    ):
+        if period not in VALID_PERIODS:
+            raise ValueError(
+                f"invalid period {period!r}, expected one of {VALID_PERIODS}"
+            )
+        if interval <= 0:
+            raise ValueError(
+                f"invalid interval {interval!r}, expected a positive integer"
+            )
         self.interval = interval
         self.period = period
+        self.clear = clear
+        self._renderer = renderer or TableRenderer()
+        self._console = console or Console(file=output or sys.stdout)
 
-    def _print_header(self):
-        print("\n" + "=" * 107)
-        static = f"{'Symbol':<6} | {'Average':<10} |"
-        labels = PERIOD_LABELS.get(self.period, ())
-        variable = "".join(f" {label:<10} |" for label in labels)
-        print(static + variable)
-        print("-" * 107)
+    def render(self, quotes: list[TickerQuote]) -> Table:
+        return self._renderer.build(quotes, self.period)
 
-    def print_header_debug(self, data_list):
-        for curr in data_list:
-            print(curr)
-
-    def display_stock_data(self, data_list):
-        os.system("cls" if os.name == "nt" else "clear")
-        self._print_header()
-        for item in data_list:
-            symbol, avg_text = self._symbol_and_average(item)
-            cells = [
-                self._format_change(item, label)
-                for label in PERIOD_LABELS.get(self.period, ())
-            ]
-            row = f"{symbol:<6.6} | {avg_text:<10}" + "".join(
-                f" | {c:<10} |" for c in cells
-            )
-            print(row)
-        print("=" * 107)
-        print(f"\nNext update in {self.interval} seconds...")
-
-    def _symbol_and_average(self, item: Any) -> tuple[str, str]:
-        symbol = self._field(item, "symbol", "N/A")
-        average = self._field(item, "average", "N/A")
-        try:
-            avg_text = f"{float(average):.2f}"  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            avg_text = str(average)
-        return str(symbol), avg_text
-
-    def _format_change(self, item: Any, label: str) -> str:
-        value = self._change_value(item, label)
-        if value is None or value == "N/A":
-            return "N/A"
-        try:
-            return f"{float(value):.2f}%"  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return str(value)
-
-    @staticmethod
-    def _field(item: Any, name: str, default: Any) -> Any:
-        if hasattr(item, name):
-            return getattr(item, name)
-        if isinstance(item, dict):
-            return item.get(name, default)
-        return default
-
-    @classmethod
-    def _change_value(cls, item: Any, label: str) -> Any:
-        changes = cls._field(item, "changes", None)
-        if isinstance(changes, dict) and label in changes:
-            return changes[label]
-        if isinstance(item, dict):
-            return item.get(label, "N/A")
-        return "N/A"
+    def display_stock_data(self, quotes: list[TickerQuote]) -> None:
+        if self.clear:
+            self._console.clear()
+        self._console.print(self.render(quotes))
+        errors = [q for q in quotes if q.error is not None]
+        for quote in errors:
+            self._console.print(f"{quote.symbol}: N/A ({quote.error})", style="dim")
+        self._console.print(f"\nNext update in {self.interval} seconds...", style="dim")

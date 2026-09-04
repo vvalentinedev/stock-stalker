@@ -133,15 +133,53 @@ def test_provider_caches_batch(tmp_path):
     assert calls["n"] == 1
 
 
-def test_cli_handles_dataclass_and_legacy_dict(capsys):
-    cli = CLI(interval=60, period="1mo")
+def test_cli_renders_gains_losses_and_errors():
+    import io
+
+    from rich.console import Console
+
     from stock_stalker.models import TickerQuote
 
+    stream = io.StringIO()
+    cli = CLI(interval=60, period="1mo", console=Console(file=stream, width=120))
     cli.display_stock_data(
-        [TickerQuote(symbol="AAPL", average=10.0, changes={"5d": 1.5, "1mo": -2.0})]
+        [
+            TickerQuote(symbol="AAPL", average=10.0, changes={"5d": 1.5, "1mo": -2.0}),
+            TickerQuote(symbol="FAIL", average=float("nan"), error="no data"),
+        ]
     )
-    out = capsys.readouterr().out
-    assert "AAPL" in out and "1.50%" in out
-    cli.display_stock_data([{"symbol": "MSFT", "average": 20.0, "5d": 3.0, "1mo": 4.0}])
-    out = capsys.readouterr().out
-    assert "MSFT" in out and "3.00%" in out
+    out = stream.getvalue()
+    assert "AAPL" in out and "1.50%" in out and "-2.00%" in out
+    assert "FAIL" in out and "N/A" in out and "no data" in out
+
+
+def test_cli_validates_args():
+    import pytest as pt
+
+    with pt.raises(ValueError):
+        CLI(interval=0, period="1mo")
+    with pt.raises(ValueError):
+        CLI(interval=60, period="10y")
+
+
+def test_cli_does_not_clear_by_default():
+    import io
+
+    from rich.console import Console
+
+    from stock_stalker.models import TickerQuote
+
+    stream = io.StringIO()
+    cleared = {"n": 0}
+    console = Console(file=stream, width=120)
+
+    def _fail_clear():
+        cleared["n"] += 1
+        raise AssertionError("clear should be opt-in")
+
+    console.clear = _fail_clear  # type: ignore[method-assign]
+    cli = CLI(interval=60, period="5d", console=console)
+    cli.display_stock_data(
+        [TickerQuote(symbol="AAPL", average=10.0, changes={"5d": 0.0})]
+    )
+    assert cleared["n"] == 0

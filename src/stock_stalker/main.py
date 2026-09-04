@@ -23,7 +23,7 @@ def main():
     if pending:
         my_core.set_ticker_list(pending)
 
-    cli = CLI(interval=60, period=my_core.period)
+    cli = CLI(interval=60, period=my_core.period, clear=True)
 
     try:
         while True:

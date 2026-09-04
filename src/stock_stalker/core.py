@@ -1,21 +1,11 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
-from .models import TickerQuote
+from .models import PERIOD_LABELS, VALID_PERIODS, Period, TickerQuote
 from .provider import YFinanceProvider
 from .repository import TickerRepository, normalize_ticker
 
-Period = Literal["5d", "1mo", "ytd", "1y", "5y"]
-
-VALID_PERIODS: tuple[str, ...] = ("5d", "1mo", "ytd", "1y", "5y")
-
-PERIOD_LABELS: dict[str, tuple[str, ...]] = {
-    "5d": ("5d",),
-    "1mo": ("5d", "1mo"),
-    "ytd": ("5d", "1mo", "ytd"),
-    "1y": ("5d", "1mo", "ytd", "1y"),
-    "5y": ("5d", "1mo", "ytd", "1y", "5y"),
-}
+__all__ = ["Core", "PERIOD_LABELS", "VALID_PERIODS", "Period"]
 
 TRADING_DAYS: dict[str, int] = {"5d": 5, "1mo": 21, "1y": 252}
 
