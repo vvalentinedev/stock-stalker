@@ -78,6 +78,7 @@ class CLI:
         console: Console | None = None,
         renderer: TableRenderer | None = None,
         modern: bool = False,
+        watch: bool = False,
     ):
         if period not in VALID_PERIODS:
             raise ValueError(
@@ -91,6 +92,7 @@ class CLI:
         self.period = period
         self.clear = clear
         self.modern = modern
+        self.watch = watch
         self._renderer = renderer or TableRenderer(modern=modern)
         self._console = console or Console(file=output or sys.stdout)
 
@@ -104,4 +106,7 @@ class CLI:
         errors = [q for q in quotes if q.error is not None]
         for quote in errors:
             self._console.print(f"{quote.symbol}: N/A ({quote.error})", style="dim")
-        self._console.print(f"\nNext update in {self.interval} seconds...", style="dim")
+        if self.watch:
+            self._console.print(
+                f"\nNext update in {self.interval} seconds...", style="dim"
+            )

@@ -47,12 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=60,
         metavar="SECONDS",
-        help="refresh interval in seconds (default: 60)",
+        help="refresh interval in seconds for --watch (default: 60)",
     )
     parser.add_argument(
         "--modern",
         action="store_true",
         help="use modern table style (default: classic ASCII)",
+    )
+    parser.add_argument(
+        "--watch",
+        "--continuous",
+        dest="watch",
+        action="store_true",
+        help="refresh continuously every --interval seconds (default: run once)",
     )
     return parser
 
@@ -80,14 +87,22 @@ def main(argv: list[str] | None = None) -> None:
             my_core.remove_item_from_ticker_list(ticker)
 
     cli = CLI(
-        interval=args.interval, period=args.period, clear=True, modern=args.modern
+        interval=args.interval,
+        period=args.period,
+        clear=args.watch,
+        modern=args.modern,
+        watch=args.watch,
     )
 
     try:
-        while True:
+        if args.watch:
+            while True:
+                ticker_data = my_core.get_quotes()
+                cli.display_stock_data(ticker_data)
+                time.sleep(cli.interval)
+        else:
             ticker_data = my_core.get_quotes()
             cli.display_stock_data(ticker_data)
-            time.sleep(cli.interval)
     except KeyboardInterrupt:
         print("\nStopping Stock Stalker...")
 
