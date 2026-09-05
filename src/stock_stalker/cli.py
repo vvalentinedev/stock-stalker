@@ -23,10 +23,9 @@ class TableRenderer:
     def build(self, quotes: list[TickerQuote], period: str) -> Table:
         labels = PERIOD_LABELS[period]
         if self.modern:
-            table = Table(title="Stock Stalker", show_lines=False)
+            table = Table(show_lines=False)
         else:
             table = Table(
-                title="Stock Stalker",
                 show_lines=False,
                 box=CLASSIC_BOX,
                 padding=(0, 1),
