@@ -2,6 +2,7 @@ import math
 import sys
 from typing import TextIO
 
+from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -10,9 +11,15 @@ from .models import PERIOD_LABELS, VALID_PERIODS, TickerQuote
 
 
 class TableRenderer:
+    def __init__(self, modern: bool = False):
+        self.modern = modern
+
     def build(self, quotes: list[TickerQuote], period: str) -> Table:
         labels = PERIOD_LABELS[period]
-        table = Table(title="Stock Stalker", show_lines=False)
+        if self.modern:
+            table = Table(title="Stock Stalker", show_lines=False)
+        else:
+            table = Table(title="Stock Stalker", show_lines=False, box=box.ASCII)
         table.add_column("Symbol", style="bold", no_wrap=True)
         table.add_column("Average", justify="right")
         for label in labels:
@@ -59,6 +66,7 @@ class CLI:
         output: TextIO | None = None,
         console: Console | None = None,
         renderer: TableRenderer | None = None,
+        modern: bool = False,
     ):
         if period not in VALID_PERIODS:
             raise ValueError(
@@ -71,7 +79,8 @@ class CLI:
         self.interval = interval
         self.period = period
         self.clear = clear
-        self._renderer = renderer or TableRenderer()
+        self.modern = modern
+        self._renderer = renderer or TableRenderer(modern=modern)
         self._console = console or Console(file=output or sys.stdout)
 
     def render(self, quotes: list[TickerQuote]) -> Table:

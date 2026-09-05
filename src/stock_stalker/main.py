@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="refresh interval in seconds (default: 60)",
     )
+    parser.add_argument(
+        "--modern",
+        action="store_true",
+        help="use modern table style (default: classic ASCII)",
+    )
     return parser
 
 
@@ -74,7 +79,9 @@ def main(argv: list[str] | None = None) -> None:
         for ticker in args.newlist_remove:
             my_core.remove_item_from_ticker_list(ticker)
 
-    cli = CLI(interval=args.interval, period=args.period, clear=True)
+    cli = CLI(
+        interval=args.interval, period=args.period, clear=True, modern=args.modern
+    )
 
     try:
         while True:
