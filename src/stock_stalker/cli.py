@@ -10,6 +10,12 @@ from rich.text import Text
 from .models import PERIOD_LABELS, VALID_PERIODS, TickerQuote
 
 
+CLASSIC_BOX = box.Box(
+    "----\n  | \n----\n  | \n    \n    \n  | \n----\n",
+    ascii=True,
+)
+
+
 class TableRenderer:
     def __init__(self, modern: bool = False):
         self.modern = modern
@@ -19,7 +25,12 @@ class TableRenderer:
         if self.modern:
             table = Table(title="Stock Stalker", show_lines=False)
         else:
-            table = Table(title="Stock Stalker", show_lines=False, box=box.ASCII)
+            table = Table(
+                title="Stock Stalker",
+                show_lines=False,
+                box=CLASSIC_BOX,
+                padding=(0, 1),
+            )
         table.add_column("Symbol", style="bold", no_wrap=True)
         table.add_column("Average", justify="right")
         for label in labels:
