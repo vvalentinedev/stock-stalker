@@ -96,13 +96,16 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         if args.watch:
+            first = True
             while True:
-                ticker_data = my_core.get_quotes()
-                cli.display_stock_data(ticker_data)
+                if first:
+                    cli.display_live(my_core.tickers_list, my_core.get_quotes)
+                    first = False
+                else:
+                    cli.display_stock_data(my_core.get_quotes())
                 time.sleep(cli.interval)
         else:
-            ticker_data = my_core.get_quotes()
-            cli.display_stock_data(ticker_data)
+            cli.display_live(my_core.tickers_list, my_core.get_quotes)
     except KeyboardInterrupt:
         print("\nStopping Stock Stalker...")
 
