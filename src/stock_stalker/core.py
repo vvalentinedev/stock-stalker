@@ -70,13 +70,18 @@ class Core:
             self._tickers = self._repository.save(remaining)
         return list(self._tickers)
 
-    def _fetch_single_ticker(self, ticker: str) -> TickerQuote:
+    def get_quote(self, ticker: str) -> TickerQuote:
+        """Fetch a one-shot quote for a single ticker without touching the saved list."""
+        symbol = self._validate_ticker(ticker)
         return self._build_quote(
-            ticker,
-            self._provider.fetch_one(ticker, self._period),
+            symbol,
+            self._provider.fetch_one(symbol, self._period),
             self._period,
             datetime.now(),
         )
+
+    def _fetch_single_ticker(self, ticker: str) -> TickerQuote:
+        return self.get_quote(ticker)
 
     def _get_percentage_change(
         self, hist: object, offset: int, current_price: float

@@ -3,7 +3,8 @@ import time
 
 from .cli import CLI
 from .core import Core
-from .models import VALID_PERIODS
+from .models import VALID_PERIODS, TickerQuote
+from .repository import normalize_ticker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -14,6 +15,8 @@ def build_parser() -> argparse.ArgumentParser:
         "  stock-stalker --newlist AAPL NVDA\n"
         "  stock-stalker --newlist-append MSFT --period 1mo\n"
         "  stock-stalker --newlist-remove GOOG\n"
+        "  stock-stalker --peek GOOG\n"
+        "  stock-stalker --peek GOOG --period 1mo\n"
         "  stock-stalker --period ytd --interval 30\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -35,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         metavar="TICKER",
         help="remove tickers from the tracked list",
+    )
+    targets.add_argument(
+        "--peek",
+        metavar="TICKER",
+        help="look up a single ticker without changing the saved list",
     )
     parser.add_argument(
         "--period",
@@ -77,6 +85,39 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     my_core = Core(period=args.period)
 
+    cli = CLI(
+        interval=args.interval,
+        period=args.period,
+        clear=args.watch,
+        modern=args.modern,
+        watch=args.watch,
+    )
+
+    if args.peek is not None:
+        # One-shot lookup that never touches the persisted list.
+        # Placeholder uses the normalized symbol; Core.get_quote()
+        # validates the ticker when fetching.
+        peek_symbol = normalize_ticker(args.peek)
+
+        def _peek_quotes() -> list[TickerQuote]:
+            return [my_core.get_quote(peek_symbol)]
+
+        try:
+            if args.watch:
+                first = True
+                while True:
+                    if first:
+                        cli.display_live([peek_symbol], _peek_quotes)
+                        first = False
+                    else:
+                        cli.display_stock_data(_peek_quotes())
+                    time.sleep(cli.interval)
+            else:
+                cli.display_live([peek_symbol], _peek_quotes)
+        except KeyboardInterrupt:
+            print("\nStopping Stock Stalker...")
+        return
+
     if args.newlist is not None:
         my_core.set_ticker_list(list(args.newlist))
     elif args.newlist_append is not None:
@@ -85,14 +126,6 @@ def main(argv: list[str] | None = None) -> None:
     elif args.newlist_remove is not None:
         for ticker in args.newlist_remove:
             my_core.remove_item_from_ticker_list(ticker)
-
-    cli = CLI(
-        interval=args.interval,
-        period=args.period,
-        clear=args.watch,
-        modern=args.modern,
-        watch=args.watch,
-    )
 
     try:
         if args.watch:
