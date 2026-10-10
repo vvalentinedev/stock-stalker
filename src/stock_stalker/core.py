@@ -1,9 +1,14 @@
 from datetime import datetime
 from typing import Any
 
-from .models import PERIOD_LABELS, VALID_PERIODS, Period, TickerQuote
+from .models import PERIOD_LABELS, VALID_PERIODS, Period, ThemeGroup, TickerQuote
 from .provider import YFinanceProvider
-from .repository import TickerRepository, normalize_ticker
+from .repository import (
+    ThemeRepository,
+    TickerRepository,
+    normalize_ticker,
+    validate_theme_name,
+)
 
 __all__ = ["Core", "PERIOD_LABELS", "VALID_PERIODS", "Period"]
 
@@ -16,12 +21,17 @@ class Core:
         period: Period = "1y",
         repository: TickerRepository | None = None,
         provider: YFinanceProvider | None = None,
+        theme_repository: ThemeRepository | None = None,
     ):
         self._validate_period(period)
         self._period: Period = period
         self._repository = repository or TickerRepository()
         self._provider = provider or YFinanceProvider()
         self._tickers: list[str] = self._repository.load()
+        self._theme_repository = theme_repository or ThemeRepository()
+        self._themes: dict[str, list[str]] = self._prune_themes(
+            self._theme_repository.load()
+        )
 
     @property
     def period(self) -> Period:
@@ -40,6 +50,79 @@ class Core:
     def tickers_list(self, value: list[str]) -> None:
         self.set_ticker_list(value)
 
+    @property
+    def themes(self) -> dict[str, list[str]]:
+        return {name: list(members) for name, members in self._themes.items()}
+
+    def set_theme(self, name: str, tickers: list[str]) -> dict[str, list[str]]:
+        theme = validate_theme_name(name)
+        members = [self._validate_ticker(t) for t in tickers if str(t).strip()]
+        members = list(dict.fromkeys(members))
+        if not members:
+            return self.delete_theme(theme)
+        # Enforce single membership in memory before persisting.
+        for other in list(self._themes.keys()):
+            if other != theme:
+                remaining = [t for t in self._themes[other] if t not in members]
+                if remaining:
+                    self._themes[other] = remaining
+                else:
+                    del self._themes[other]
+        # Dict assignment keeps position for existing themes and appends
+        # new themes at the end, which defines display order.
+        self._themes[theme] = members
+        self._themes = self._theme_repository.save(self._themes)
+        # Theme members become tracked tickers so they are fetched.
+        missing = [t for t in members if t not in self._tickers]
+        if missing:
+            self._tickers = self._repository.save([*self._tickers, *missing])
+        return self.themes
+
+    def delete_theme(self, name: str) -> dict[str, list[str]]:
+        theme = validate_theme_name(name)
+        self._themes.pop(theme, None)
+        self._themes = self._theme_repository.save(self._themes)
+        return self.themes
+
+    def clear_themes(self) -> dict[str, list[str]]:
+        self._themes = self._theme_repository.clear()
+        return self.themes
+
+    def get_grouped_quotes(self) -> list[ThemeGroup]:
+        quotes = self.get_quotes()
+        return self.group_quotes(quotes)
+
+    def get_grouped_symbols(self) -> list[tuple[str | None, list[str]]]:
+        """Theme grouping for loading placeholders (no fetch needed)."""
+        themes = getattr(self, "_themes", {})
+        groups: list[tuple[str | None, list[str]]] = []
+        for theme, members in themes.items():
+            tracked = [m for m in members if m in self._tickers]
+            if tracked:
+                groups.append((theme, tracked))
+        themed = {m for members in themes.values() for m in members}
+        ungrouped = [t for t in self._tickers if t not in themed]
+        if ungrouped:
+            groups.append((None, ungrouped))
+        return groups
+
+    def group_quotes(self, quotes: list[TickerQuote]) -> list[ThemeGroup]:
+        by_symbol = {q.symbol: q for q in quotes}
+        themes = getattr(self, "_themes", {})
+        groups: list[ThemeGroup] = []
+        for theme, members in themes.items():
+            group_quotes = [by_symbol[m] for m in members if m in by_symbol]
+            if group_quotes:
+                groups.append(ThemeGroup(theme=theme, quotes=group_quotes))
+        themed_symbols = {m for members in themes.values() for m in members}
+        ungrouped = [q for q in quotes if q.symbol not in themed_symbols]
+        if ungrouped:
+            # Preserve ticker-list order for ungrouped members.
+            order = {t: i for i, t in enumerate(self._tickers)}
+            ungrouped.sort(key=lambda q: order.get(q.symbol, len(order)))
+            groups.append(ThemeGroup(theme=None, quotes=ungrouped))
+        return groups
+
     def get_quotes(self) -> list[TickerQuote]:
         if not self._tickers:
             return []
@@ -55,6 +138,7 @@ class Core:
 
     def set_ticker_list(self, tickers: list[str]) -> list[str]:
         self._tickers = self._repository.save(tickers)
+        self._themes = self._prune_themes(getattr(self, "_themes", {}))
         return list(self._tickers)
 
     def append_item_to_ticker_list(self, ticker: str) -> list[str]:
@@ -68,7 +152,31 @@ class Core:
         if symbol in self._tickers:
             remaining = [t for t in self._tickers if t != symbol]
             self._tickers = self._repository.save(remaining)
+            theme_repo = getattr(self, "_theme_repository", None)
+            if theme_repo is not None:
+                theme_repo.remove_ticker(symbol)
+                self._themes = theme_repo.load()
+            elif hasattr(self, "_themes"):
+                for name in list(self._themes.keys()):
+                    if symbol in self._themes[name]:
+                        self._themes[name] = [
+                            t for t in self._themes[name] if t != symbol
+                        ]
+                        if not self._themes[name]:
+                            del self._themes[name]
         return list(self._tickers)
+
+    def _prune_themes(self, themes: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Drop theme members no longer tracked; persist if changed."""
+        pruned: dict[str, list[str]] = {}
+        for name, members in themes.items():
+            remaining = [t for t in members if t in self._tickers]
+            if remaining:
+                pruned[name] = remaining
+        theme_repo = getattr(self, "_theme_repository", None)
+        if pruned != themes and theme_repo is not None:
+            pruned = theme_repo.save(pruned)
+        return pruned
 
     def get_quote(self, ticker: str) -> TickerQuote:
         """Fetch a one-shot quote for a single ticker without touching the saved list."""

@@ -20,3 +20,11 @@ class TickerQuote:
     average: float
     changes: dict[str, float] = field(default_factory=dict)
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class ThemeGroup:
+    """One visual group: a named theme, or None for ungrouped tickers."""
+
+    theme: str | None
+    quotes: list[TickerQuote] = field(default_factory=list)

@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from .models import PERIOD_LABELS, VALID_PERIODS, TickerQuote
+from .models import PERIOD_LABELS, VALID_PERIODS, ThemeGroup, TickerQuote
 
 
 CLASSIC_BOX = box.Box(
@@ -28,6 +28,28 @@ class TableRenderer:
             table.add_row(*self._row(quote, labels))
         return table
 
+    def build_grouped(self, groups: list[ThemeGroup], period: str) -> Table:
+        """Option 1 style: single table, theme header rows + indented members.
+
+        No aggregate/summary rows (deferred). A lone ungrouped group renders
+        flat so non-theme users see no change.
+        """
+        labels = PERIOD_LABELS[period]
+        table = self._table(labels)
+        flat = len(groups) == 1 and groups[0].theme is None
+        first = True
+        for group in groups:
+            if not group.quotes:
+                continue
+            if not flat:
+                if not first:
+                    table.add_section()
+                table.add_row(*self._theme_header(group, len(labels)))
+                first = False
+            for quote in group.quotes:
+                table.add_row(*self._row(quote, labels, indent=not flat))
+        return table
+
     def build_loading(self, symbols: list[str], period: str) -> Table:
         labels = PERIOD_LABELS[period]
         table = self._table(labels)
@@ -35,6 +57,33 @@ class TableRenderer:
             row: list[Text | str] = [Text(symbol, style="bold")]
             row.extend(Text("--", style="dim") for _ in range(len(labels) + 1))
             table.add_row(*row)
+        return table
+
+    def build_loading_grouped(
+        self, groups: list[tuple[str | None, list[str]]], period: str
+    ) -> Table:
+        labels = PERIOD_LABELS[period]
+        table = self._table(labels)
+        flat = len(groups) == 1 and groups[0][0] is None
+        first = True
+        for theme, symbols in groups:
+            if not symbols:
+                continue
+            if not flat:
+                if not first:
+                    table.add_section()
+                table.add_row(
+                    *self._theme_header(
+                        ThemeGroup(theme=theme, quotes=[]), len(labels), count=len(symbols)
+                    )
+                )
+                first = False
+            for symbol in symbols:
+                row: list[Text | str] = [
+                    Text(f"  {symbol}" if not flat else symbol, style="bold")
+                ]
+                row.extend(Text("--", style="dim") for _ in range(len(labels) + 1))
+                table.add_row(*row)
         return table
 
     def _table(self, labels: tuple[str, ...]) -> Table:
@@ -52,16 +101,33 @@ class TableRenderer:
             table.add_column(label, justify="right")
         return table
 
-    def _row(self, quote: TickerQuote, labels: tuple[str, ...]) -> list[Text | str]:
+    def _theme_header(
+        self, group: ThemeGroup, n_labels: int, count: int | None = None
+    ) -> list[Text]:
+        n = count if count is not None else len(group.quotes)
+        if group.theme is None:
+            title = f"▸ OTHER ({n})"
+            style = "bold dim"
+        else:
+            title = f"▸ {group.theme} ({n})"
+            style = "bold cyan"
+        cells: list[Text] = [Text(title, style=style)]
+        cells.extend(Text("", style="dim") for _ in range(n_labels + 1))
+        return cells
+
+    def _row(
+        self, quote: TickerQuote, labels: tuple[str, ...], indent: bool = False
+    ) -> list[Text | str]:
+        symbol_text = f"  {quote.symbol}" if indent else quote.symbol
         if quote.error is not None or self._is_nan(quote.average):
             cells: list[Text | str] = [
-                Text(quote.symbol, style="bold"),
+                Text(symbol_text, style="bold"),
                 Text("N/A", style="dim"),
             ]
             cells.extend(Text("N/A", style="dim") for _ in labels)
             return cells
         cells = [
-            Text(quote.symbol, style="bold"),
+            Text(symbol_text, style="bold"),
             Text(f"{quote.average:.2f}", justify="right"),
         ]
         for label in labels:
@@ -112,6 +178,9 @@ class CLI:
     def render(self, quotes: list[TickerQuote]) -> Table:
         return self._renderer.build(quotes, self.period)
 
+    def render_grouped(self, groups: list[ThemeGroup]) -> Table:
+        return self._renderer.build_grouped(groups, self.period)
+
     def display_stock_data(self, quotes: list[TickerQuote]) -> None:
         if self.clear:
             self._console.clear()
@@ -119,6 +188,21 @@ class CLI:
         errors = [q for q in quotes if q.error is not None]
         for quote in errors:
             self._console.print(f"{quote.symbol}: N/A ({quote.error})", style="dim")
+        if self.watch:
+            self._console.print(
+                f"\nNext update in {self.interval} seconds...", style="dim"
+            )
+
+    def display_grouped_data(self, groups: list[ThemeGroup]) -> None:
+        if self.clear:
+            self._console.clear()
+        self._console.print(self.render_grouped(groups))
+        for group in groups:
+            for quote in group.quotes:
+                if quote.error is not None:
+                    self._console.print(
+                        f"{quote.symbol}: N/A ({quote.error})", style="dim"
+                    )
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"
@@ -153,3 +237,37 @@ class CLI:
                 f"\nNext update in {self.interval} seconds...", style="dim"
             )
         return quotes
+
+    def display_live_grouped(
+        self,
+        grouped_symbols: list[tuple[str | None, list[str]]],
+        loader: Callable[[], list[ThemeGroup]],
+    ) -> list[ThemeGroup]:
+        flat_tickers = [t for _, syms in grouped_symbols for t in syms]
+        if not flat_tickers:
+            self.display_grouped_data([])
+            return []
+        loading = self._renderer.build_loading_grouped(grouped_symbols, self.period)
+        if not self._console.is_terminal:
+            self._console.print(loading)
+            groups = loader()
+            self.display_grouped_data(groups)
+            return groups
+        if self.clear:
+            self._console.clear()
+        from rich.live import Live
+
+        with Live(loading, console=self._console, refresh_per_second=4) as live:
+            groups = loader()
+            live.update(self._renderer.build_grouped(groups, self.period))
+        for group in groups:
+            for quote in group.quotes:
+                if quote.error is not None:
+                    self._console.print(
+                        f"{quote.symbol}: N/A ({quote.error})", style="dim"
+                    )
+        if self.watch:
+            self._console.print(
+                f"\nNext update in {self.interval} seconds...", style="dim"
+            )
+        return groups
