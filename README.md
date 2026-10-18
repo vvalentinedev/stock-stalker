@@ -1,6 +1,6 @@
 # Stock Stalker
 
-Monitor your favorite stocks from the terminal. Data is fetched from Yahoo Finance via `yfinance` and rendered as a live `rich` table with average price and % changes.
+Monitor your favorite stocks from the terminal. Data is fetched from Yahoo Finance via `yfinance`.
 
 <img width="691" height="411" alt="image" src="https://github.com/user-attachments/assets/6f82a564-840e-420a-824b-7edfba847fd6" />
 
@@ -8,7 +8,6 @@ Monitor your favorite stocks from the terminal. Data is fetched from Yahoo Finan
 
 - One-shot or continuous (`--watch`) monitoring
 - Tracks average of High/Low per day, plus % changes for `5d`, `1mo`, `ytd`, `1y`, `5y` depending on `--period`
-- Persistent ticker list (defaults to `AAPL`, `NVDA`, `GOOG`) stored via `platformdirs`
 - Batched `yfinance` download with threaded fallback + 60s cache
 - Classic ASCII or `--modern` table style, with loading placeholder and color-coded gains/losses
 
