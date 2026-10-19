@@ -59,7 +59,17 @@ class TickerQuote:
 
 @dataclass(frozen=True)
 class ThemeGroup:
-    """One visual group: a named theme, or None for ungrouped tickers."""
+    """One visual group: a named theme/subtheme, or None for ungrouped tickers."""
 
     theme: str | None
     quotes: list[TickerQuote] = field(default_factory=list)
+    children: list["ThemeGroup"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ThemeTree:
+    """Symbol-only counterpart of ThemeGroup used for loading placeholders."""
+
+    name: str | None
+    symbols: list[str] = field(default_factory=list)
+    children: list["ThemeTree"] = field(default_factory=list)

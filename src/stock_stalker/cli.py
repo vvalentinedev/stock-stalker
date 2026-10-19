@@ -8,13 +8,31 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from .models import PERIOD_LABELS, VALID_PERIODS, ThemeGroup, TickerQuote
+from .models import (
+    PERIOD_LABELS,
+    VALID_PERIODS,
+    ThemeGroup,
+    ThemeTree,
+    TickerQuote,
+)
 
 
 CLASSIC_BOX = box.Box(
     "----\n  | \n----\n  | \n    \n    \n  | \n----\n",
     ascii=True,
 )
+
+
+def _iter_quotes(groups: list[ThemeGroup]):
+    for group in groups:
+        yield from group.quotes
+        yield from _iter_quotes(group.children)
+
+
+def _iter_symbols(nodes: list[ThemeTree]):
+    for node in nodes:
+        yield from node.symbols
+        yield from _iter_symbols(node.children)
 
 
 class TableRenderer:
@@ -29,26 +47,56 @@ class TableRenderer:
         return table
 
     def build_grouped(self, groups: list[ThemeGroup], period: str) -> Table:
-        """Option 1 style: single table, theme header rows + indented members.
+        """Single table with theme/subtheme header rows + indented members.
 
-        No aggregate/summary rows (deferred). A lone ungrouped group renders
-        flat so non-theme users see no change.
+        A lone ungrouped group renders flat so non-theme users see no change.
         """
         labels = PERIOD_LABELS[period]
         table = self._table(labels)
-        flat = len(groups) == 1 and groups[0].theme is None
+        flat = (
+            len(groups) == 1
+            and groups[0].theme is None
+            and not groups[0].children
+        )
+        if flat:
+            for quote in groups[0].quotes:
+                table.add_row(*self._row(quote, labels, period=period))
+            return table
         first = True
         for group in groups:
-            if not group.quotes:
+            if not (group.quotes or group.children):
                 continue
-            if not flat:
-                if not first:
-                    table.add_section()
-                table.add_row(*self._theme_header(group, len(labels)))
-                first = False
-            for quote in group.quotes:
-                table.add_row(*self._row(quote, labels, indent=not flat, period=period))
+            if not first:
+                table.add_section()
+            first = False
+            self._add_group(table, group, labels, period, depth=0)
         return table
+
+    def _add_group(
+        self,
+        table: Table,
+        group: ThemeGroup,
+        labels: tuple[str, ...],
+        period: str,
+        depth: int,
+    ) -> None:
+        table.add_row(
+            *self._theme_header(
+                group.theme, self._group_count(group), len(labels), depth
+            )
+        )
+        for quote in group.quotes:
+            table.add_row(
+                *self._row(quote, labels, indent=depth + 1, period=period)
+            )
+        for child in group.children:
+            self._add_group(table, child, labels, period, depth + 1)
+
+    @staticmethod
+    def _group_count(group: ThemeGroup) -> int:
+        return len(group.quotes) + sum(
+            TableRenderer._group_count(child) for child in group.children
+        )
 
     def build_loading(self, symbols: list[str], period: str) -> Table:
         labels = PERIOD_LABELS[period]
@@ -60,31 +108,61 @@ class TableRenderer:
         return table
 
     def build_loading_grouped(
-        self, groups: list[tuple[str | None, list[str]]], period: str
+        self, groups: list[ThemeTree], period: str
     ) -> Table:
         labels = PERIOD_LABELS[period]
         table = self._table(labels)
-        flat = len(groups) == 1 and groups[0][0] is None
+        flat = (
+            len(groups) == 1
+            and groups[0].name is None
+            and not groups[0].children
+        )
+        if flat:
+            for symbol in groups[0].symbols:
+                table.add_row(*self._loading_row(symbol, labels, indent=0))
+            return table
         first = True
-        for theme, symbols in groups:
-            if not symbols:
+        for group in groups:
+            if not (group.symbols or group.children):
                 continue
-            if not flat:
-                if not first:
-                    table.add_section()
-                table.add_row(
-                    *self._theme_header(
-                        ThemeGroup(theme=theme, quotes=[]), len(labels), count=len(symbols)
-                    )
-                )
-                first = False
-            for symbol in symbols:
-                row: list[Text | str] = [
-                    Text(f"  {symbol}" if not flat else symbol, style="bold")
-                ]
-                row.extend(Text("--", style="dim") for _ in range(len(labels) + 1))
-                table.add_row(*row)
+            if not first:
+                table.add_section()
+            first = False
+            self._add_loading_group(table, group, labels, depth=0)
         return table
+
+    def _add_loading_group(
+        self,
+        table: Table,
+        group: ThemeTree,
+        labels: tuple[str, ...],
+        depth: int,
+    ) -> None:
+        table.add_row(
+            *self._theme_header(
+                group.name, self._tree_count(group), len(labels), depth
+            )
+        )
+        for symbol in group.symbols:
+            table.add_row(*self._loading_row(symbol, labels, indent=depth + 1))
+        for child in group.children:
+            self._add_loading_group(table, child, labels, depth + 1)
+
+    @staticmethod
+    def _tree_count(node: ThemeTree) -> int:
+        return len(node.symbols) + sum(
+            TableRenderer._tree_count(child) for child in node.children
+        )
+
+    @staticmethod
+    def _loading_row(
+        symbol: str, labels: tuple[str, ...], indent: int
+    ) -> list[Text | str]:
+        row: list[Text | str] = [
+            Text(f"{'  ' * indent}{symbol}", style="bold")
+        ]
+        row.extend(Text("--", style="dim") for _ in range(len(labels) + 1))
+        return row
 
     def _table(self, labels: tuple[str, ...]) -> Table:
         if self.modern:
@@ -102,15 +180,19 @@ class TableRenderer:
         return table
 
     def _theme_header(
-        self, group: ThemeGroup, n_labels: int, count: int | None = None
+        self,
+        name: str | None,
+        count: int,
+        n_labels: int,
+        depth: int = 0,
     ) -> list[Text]:
-        n = count if count is not None else len(group.quotes)
-        if group.theme is None:
-            title = f"▸ OTHER ({n})"
+        indent = "  " * depth
+        if name is None:
+            title = f"{indent}▸ OTHER ({count})"
             style = "bold dim"
         else:
-            title = f"▸ {group.theme} ({n})"
-            style = "bold cyan"
+            title = f"{indent}▸ {name} ({count})"
+            style = "bold cyan" if depth == 0 else "cyan"
         cells: list[Text] = [Text(title, style=style)]
         cells.extend(Text("", style="dim") for _ in range(n_labels + 1))
         return cells
@@ -119,10 +201,10 @@ class TableRenderer:
         self,
         quote: TickerQuote,
         labels: tuple[str, ...],
-        indent: bool = False,
+        indent: int = 0,
         period: str | None = None,
     ) -> list[Text | str]:
-        symbol_text = f"  {quote.symbol}" if indent else quote.symbol
+        symbol_text = f"{'  ' * indent}{quote.symbol}"
         if quote.error is not None or self._is_nan(quote.average):
             cells: list[Text | str] = [
                 Text(symbol_text, style="bold"),
@@ -227,7 +309,7 @@ class CLI:
         if self.clear:
             self._console.clear()
         self._console.print(self.render_grouped(groups))
-        self._print_footnotes([q for group in groups for q in group.quotes])
+        self._print_footnotes(list(_iter_quotes(groups)))
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"
@@ -263,10 +345,10 @@ class CLI:
 
     def display_live_grouped(
         self,
-        grouped_symbols: list[tuple[str | None, list[str]]],
+        grouped_symbols: list[ThemeTree],
         loader: Callable[[], list[ThemeGroup]],
     ) -> list[ThemeGroup]:
-        flat_tickers = [t for _, syms in grouped_symbols for t in syms]
+        flat_tickers = list(_iter_symbols(grouped_symbols))
         if not flat_tickers:
             self.display_grouped_data([])
             return []
@@ -283,7 +365,7 @@ class CLI:
         with Live(loading, console=self._console, refresh_per_second=4) as live:
             groups = loader()
             live.update(self._renderer.build_grouped(groups, self.period))
-        self._print_footnotes([q for group in groups for q in group.quotes])
+        self._print_footnotes(list(_iter_quotes(groups)))
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"

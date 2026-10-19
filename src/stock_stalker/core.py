@@ -1,13 +1,21 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from .models import PERIOD_LABELS, VALID_PERIODS, Period, ThemeGroup, TickerQuote
+from .models import (
+    PERIOD_LABELS,
+    VALID_PERIODS,
+    Period,
+    ThemeGroup,
+    ThemeTree,
+    TickerQuote,
+)
 from .provider import YFinanceProvider
 from .repository import (
     ThemeRepository,
     TickerRepository,
     normalize_ticker,
-    validate_theme_name,
+    split_theme_path,
+    validate_theme_path,
 )
 
 __all__ = ["Core", "PERIOD_LABELS", "VALID_PERIODS", "Period"]
@@ -66,34 +74,39 @@ class Core:
     def themes(self) -> dict[str, list[str]]:
         return {name: list(members) for name, members in self._themes.items()}
 
-    def set_theme(self, name: str, tickers: list[str]) -> dict[str, list[str]]:
-        theme = validate_theme_name(name)
+    def set_theme(
+        self, path: str | list[str], tickers: list[str]
+    ) -> dict[str, list[str]]:
+        segments = validate_theme_path(path)
         members = [self._validate_ticker(t) for t in tickers if str(t).strip()]
         members = list(dict.fromkeys(members))
         if not members:
-            return self.delete_theme(theme)
-        # Enforce single membership in memory before persisting.
-        for other in list(self._themes.keys()):
-            if other != theme:
-                remaining = [t for t in self._themes[other] if t not in members]
-                if remaining:
-                    self._themes[other] = remaining
-                else:
-                    del self._themes[other]
-        # Dict assignment keeps position for existing themes and appends
-        # new themes at the end, which defines display order.
-        self._themes[theme] = members
-        self._themes = self._theme_repository.save(self._themes)
+            return self.delete_theme(segments)
+        self._themes = self._theme_repository.set_theme(segments, members)
+        self._track_theme_members(members)
+        return self.themes
+
+    def append_to_theme(
+        self, path: str | list[str], tickers: list[str]
+    ) -> dict[str, list[str]]:
+        segments = validate_theme_path(path)
+        members = [self._validate_ticker(t) for t in tickers if str(t).strip()]
+        members = list(dict.fromkeys(members))
+        if not members:
+            return self.themes
+        self._themes = self._theme_repository.append_to_theme(segments, members)
+        self._track_theme_members(members)
+        return self.themes
+
+    def _track_theme_members(self, members: list[str]) -> None:
         # Theme members become tracked tickers so they are fetched.
         missing = [t for t in members if t not in self._tickers]
         if missing:
             self._tickers = self._repository.save([*self._tickers, *missing])
-        return self.themes
 
-    def delete_theme(self, name: str) -> dict[str, list[str]]:
-        theme = validate_theme_name(name)
-        self._themes.pop(theme, None)
-        self._themes = self._theme_repository.save(self._themes)
+    def delete_theme(self, path: str | list[str]) -> dict[str, list[str]]:
+        segments = validate_theme_path(path)
+        self._themes = self._theme_repository.delete_theme(segments)
         return self.themes
 
     def clear_themes(self) -> dict[str, list[str]]:
@@ -104,35 +117,70 @@ class Core:
         quotes = self.get_quotes()
         return self.group_quotes(quotes)
 
-    def get_grouped_symbols(self) -> list[tuple[str | None, list[str]]]:
-        """Theme grouping for loading placeholders (no fetch needed)."""
+    def _theme_nodes(self) -> dict[str, dict]:
+        """Build an ordered tree from the flat ``TECH/FAANG`` keyed mapping."""
+        roots: dict[str, dict] = {}
+        for key, members in getattr(self, "_themes", {}).items():
+            segments = split_theme_path(key)
+            if not segments:
+                continue
+            cursor = roots
+            node: dict | None = None
+            for segment in segments:
+                node = cursor.setdefault(
+                    segment, {"members": [], "children": {}}
+                )
+                cursor = node["children"]
+            if node is not None:
+                node["members"] = list(members)
+        return roots
+
+    def _themed_symbols(self) -> set[str]:
         themes = getattr(self, "_themes", {})
-        groups: list[tuple[str | None, list[str]]] = []
-        for theme, members in themes.items():
-            tracked = [m for m in members if m in self._tickers]
-            if tracked:
-                groups.append((theme, tracked))
-        themed = {m for members in themes.values() for m in members}
-        ungrouped = [t for t in self._tickers if t not in themed]
+        return {m for members in themes.values() for m in members}
+
+    def get_grouped_symbols(self) -> list[ThemeTree]:
+        """Theme grouping for loading placeholders (no fetch needed)."""
+        groups = self._symbol_tree(self._theme_nodes())
+        ungrouped = [t for t in self._tickers if t not in self._themed_symbols()]
         if ungrouped:
-            groups.append((None, ungrouped))
+            groups.append(ThemeTree(name=None, symbols=ungrouped))
+        return groups
+
+    def _symbol_tree(self, roots: dict[str, dict]) -> list[ThemeTree]:
+        groups: list[ThemeTree] = []
+        for name, node in roots.items():
+            tracked = [m for m in node["members"] if m in self._tickers]
+            children = self._symbol_tree(node["children"])
+            if tracked or children:
+                groups.append(
+                    ThemeTree(name=name, symbols=tracked, children=children)
+                )
         return groups
 
     def group_quotes(self, quotes: list[TickerQuote]) -> list[ThemeGroup]:
         by_symbol = {q.symbol: q for q in quotes}
-        themes = getattr(self, "_themes", {})
-        groups: list[ThemeGroup] = []
-        for theme, members in themes.items():
-            group_quotes = [by_symbol[m] for m in members if m in by_symbol]
-            if group_quotes:
-                groups.append(ThemeGroup(theme=theme, quotes=group_quotes))
-        themed_symbols = {m for members in themes.values() for m in members}
+        groups = self._quote_tree(self._theme_nodes(), by_symbol)
+        themed_symbols = self._themed_symbols()
         ungrouped = [q for q in quotes if q.symbol not in themed_symbols]
         if ungrouped:
             # Preserve ticker-list order for ungrouped members.
             order = {t: i for i, t in enumerate(self._tickers)}
             ungrouped.sort(key=lambda q: order.get(q.symbol, len(order)))
             groups.append(ThemeGroup(theme=None, quotes=ungrouped))
+        return groups
+
+    def _quote_tree(
+        self, roots: dict[str, dict], by_symbol: dict[str, TickerQuote]
+    ) -> list[ThemeGroup]:
+        groups: list[ThemeGroup] = []
+        for name, node in roots.items():
+            members = [by_symbol[m] for m in node["members"] if m in by_symbol]
+            children = self._quote_tree(node["children"], by_symbol)
+            if members or children:
+                groups.append(
+                    ThemeGroup(theme=name, quotes=members, children=children)
+                )
         return groups
 
     def get_quotes(self) -> list[TickerQuote]:

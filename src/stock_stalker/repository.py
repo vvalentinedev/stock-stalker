@@ -6,6 +6,7 @@ from platformdirs import user_data_dir
 DEFAULT_TICKERS = ("AAPL", "NVDA", "GOOG")
 APP_NAME = "Stock Stalker"
 THEME_NAME_MAX_LEN = 20
+THEME_PATH_SEP = "/"
 
 
 def default_csv_path() -> Path:
@@ -37,24 +38,45 @@ def validate_theme_name(name: str) -> str:
     return normalized
 
 
-def parse_theme_spec(spec: str) -> tuple[str, list[str]]:
-    """Parse a ``NAME:AAPL,NVDA,GOOG`` spec into (theme, members).
+def split_theme_path(key: str) -> list[str]:
+    """Split a stored ``TECH/FAANG`` key into ``["TECH", "FAANG"]``."""
+    return [seg for seg in str(key).split(THEME_PATH_SEP) if seg.strip()]
 
-    Separator between name and members may be ``:`` or ``=``.
-    Members may be comma- and/or whitespace-separated.
-    An empty member list (e.g. ``"TECH:"``) means "delete this theme".
+
+def validate_theme_path(path: str | list[str]) -> list[str]:
+    """Normalize a theme path (str ``"TECH/FAANG"`` or list) to validated segments."""
+    segments = split_theme_path(path) if isinstance(path, str) else [str(s) for s in path]
+    validated = [validate_theme_name(s) for s in segments if str(s).strip()]
+    if not validated:
+        raise ValueError(f"invalid theme path {path!r}")
+    return validated
+
+
+def format_theme_path(segments: list[str]) -> str:
+    """Join validated path segments into the stored ``TECH/FAANG`` key."""
+    return THEME_PATH_SEP.join(segments)
+
+
+def parse_theme_spec(spec: str) -> tuple[list[str], list[str]]:
+    """Parse a ``TECH:FAANG:GOOG,NVDA`` spec into ``(path, members)``.
+
+    The final ``:``-separated segment holds the members; the segments before it
+    form the theme path (i.e. subfolders). ``=`` may be used in place of the
+    final ``:`` to disambiguate, e.g. ``TECH:FAANG=GOOG,NVDA``.
+    Members may be comma- and/or whitespace-separated. An empty member list
+    (e.g. ``"TECH:"`` or ``"TECH:FAANG:"``) means "delete this (sub)theme".
     """
-    name_part: str
-    members_part: str
-    if ":" in spec:
-        name_part, members_part = spec.split(":", 1)
-    elif "=" in spec:
-        name_part, members_part = spec.split("=", 1)
+    if "=" in spec:
+        path_part, members_part = spec.split("=", 1)
+        path_segments = path_part.split(":")
     else:
-        raise ValueError(
-            f"invalid theme spec {spec!r}, expected 'NAME:TICKER,TICKER,...'"
-        )
-    theme = validate_theme_name(name_part)
+        if ":" not in spec:
+            raise ValueError(
+                f"invalid theme spec {spec!r}, expected 'NAME:TICKER,TICKER,...'"
+            )
+        parts = spec.split(":")
+        path_segments, members_part = parts[:-1], parts[-1]
+    path = validate_theme_path(path_segments)
     raw_members = members_part.replace(",", " ").split()
     members: list[str] = []
     for raw in raw_members:
@@ -65,7 +87,7 @@ def parse_theme_spec(spec: str) -> tuple[str, list[str]]:
             raise ValueError(f"invalid ticker {raw!r} in theme spec {spec!r}")
         if symbol not in members:
             members.append(symbol)
-    return theme, members
+    return path, members
 
 
 class TickerRepository:
@@ -120,7 +142,7 @@ class ThemeRepository:
                 if not isinstance(raw_members, list):
                     continue
                 try:
-                    theme = validate_theme_name(str(raw_name))
+                    theme = format_theme_path(validate_theme_path(str(raw_name)))
                 except ValueError:
                     continue
                 members: list[str] = []
@@ -142,7 +164,7 @@ class ThemeRepository:
     def save(self, themes: dict[str, list[str]]) -> dict[str, list[str]]:
         cleaned: dict[str, list[str]] = {}
         for raw_name, raw_members in themes.items():
-            theme = validate_theme_name(raw_name)
+            theme = format_theme_path(validate_theme_path(raw_name))
             members: list[str] = []
             for raw in raw_members:
                 symbol = normalize_ticker(str(raw))
@@ -159,39 +181,63 @@ class ThemeRepository:
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return cleaned
 
-    def set_theme(self, name: str, members: list[str]) -> dict[str, list[str]]:
-        themes = self.load()
-        theme = validate_theme_name(name)
-        if not members:
-            themes.pop(theme, None)
-            return self.save(themes)
-        # Remove these tickers from every other theme (single membership).
-        member_set = {normalize_ticker(m) for m in members if m.strip()}
+    @staticmethod
+    def _remove_members_from_others(
+        themes: dict[str, list[str]], key: str, member_set: set[str]
+    ) -> None:
+        """Enforce single membership: drop these tickers from every other leaf."""
         for other in list(themes.keys()):
-            if other != theme:
-                remaining = [t for t in themes[other] if t not in member_set]
-                if remaining:
-                    themes[other] = remaining
-                else:
-                    del themes[other]
-        # Move theme to the end to reflect most-recent definition order,
-        # unless it already existed (then keep original position).
-        cleaned_members = [normalize_ticker(m) for m in members if m.strip()]
-        cleaned_members = list(dict.fromkeys(cleaned_members))
-        if theme in themes:
-            themes[theme] = cleaned_members
-        else:
-            # Re-insert at end.
-            themes = {**themes, theme: cleaned_members}
-        # Drop the theme if it ended up empty.
-        if not themes.get(theme):
-            themes.pop(theme, None)
+            if other == key:
+                continue
+            remaining = [t for t in themes[other] if t not in member_set]
+            if remaining:
+                themes[other] = remaining
+            else:
+                del themes[other]
+
+    def _delete_subtree(
+        self, themes: dict[str, list[str]], key: str
+    ) -> dict[str, list[str]]:
+        prefix = key + THEME_PATH_SEP
+        for other in list(themes.keys()):
+            if other == key or other.startswith(prefix):
+                del themes[other]
         return self.save(themes)
 
-    def delete_theme(self, name: str) -> dict[str, list[str]]:
+    def set_theme(
+        self, path: str | list[str], members: list[str]
+    ) -> dict[str, list[str]]:
         themes = self.load()
-        themes.pop(validate_theme_name(name), None)
+        key = format_theme_path(validate_theme_path(path))
+        cleaned_members = list(
+            dict.fromkeys(normalize_ticker(m) for m in members if str(m).strip())
+        )
+        if not cleaned_members:
+            return self._delete_subtree(themes, key)
+        self._remove_members_from_others(themes, key, set(cleaned_members))
+        # Re-assigning an existing key keeps its position; new keys append.
+        themes[key] = cleaned_members
         return self.save(themes)
+
+    def append_to_theme(
+        self, path: str | list[str], members: list[str]
+    ) -> dict[str, list[str]]:
+        themes = self.load()
+        key = format_theme_path(validate_theme_path(path))
+        cleaned_members = list(
+            dict.fromkeys(normalize_ticker(m) for m in members if str(m).strip())
+        )
+        if not cleaned_members:
+            return self.save(themes)
+        self._remove_members_from_others(themes, key, set(cleaned_members))
+        existing = themes.get(key, [])
+        themes[key] = list(dict.fromkeys([*existing, *cleaned_members]))
+        return self.save(themes)
+
+    def delete_theme(self, path: str | list[str]) -> dict[str, list[str]]:
+        themes = self.load()
+        key = format_theme_path(validate_theme_path(path))
+        return self._delete_subtree(themes, key)
 
     def clear(self) -> dict[str, list[str]]:
         return self.save({})

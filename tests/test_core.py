@@ -5,7 +5,7 @@ import pytest
 from stock_stalker.cli import CLI
 from stock_stalker.core import Core
 from stock_stalker.provider import YFinanceProvider
-from stock_stalker.repository import TickerRepository
+from stock_stalker.repository import ThemeRepository, TickerRepository
 
 
 class FakeIloc:
@@ -52,11 +52,26 @@ class FakeProvider(YFinanceProvider):
         return self.frames[ticker]
 
 
-def make_core(tmp_path, period="1y", frames=None):
+def make_core(
+    tmp_path, period="1y", frames=None, theme_repository=None, tickers=None
+):
     repo = TickerRepository(path=tmp_path / "stocks.csv")
+    if tickers is not None:
+        repo.save(tickers)
     provider = FakeProvider(frames or {})
-    core = Core(period=period, repository=repo, provider=provider)
+    core = Core(
+        period=period,
+        repository=repo,
+        provider=provider,
+        theme_repository=theme_repository,
+    )
     return core, repo, provider
+
+
+def make_theme_core(tmp_path, **kwargs):
+    trepo = ThemeRepository(path=tmp_path / "themes.json")
+    core, _, _ = make_core(tmp_path, theme_repository=trepo, **kwargs)
+    return core, trepo
 
 
 def test_invalid_period_rejected(tmp_path):
@@ -311,7 +326,7 @@ def test_bad_period_exits_with_error(capsys):
 
 def test_newlist_replaces_persisted_tickers(tmp_path, monkeypatch):
     from stock_stalker import main as main_module
-    from stock_stalker.repository import TickerRepository
+
 
     repo = TickerRepository(path=tmp_path / "stocks.csv")
     monkeypatch.setattr(
@@ -335,3 +350,139 @@ def test_newlist_replaces_persisted_tickers(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module.time, "sleep", lambda seconds: None)
     main_module.main(["--newlist", "AAPL", "MSFT"])
     assert repo.load() == ["AAPL", "MSFT"]
+
+
+def test_parse_theme_spec_subfolders():
+    from stock_stalker.repository import parse_theme_spec
+
+    assert parse_theme_spec("TECH:GOOG,NVDA") == (["TECH"], ["GOOG", "NVDA"])
+    assert parse_theme_spec("TECH:FAANG:GOOG,NVDA") == (
+        ["TECH", "FAANG"],
+        ["GOOG", "NVDA"],
+    )
+    assert parse_theme_spec("tech:faang=goog,nvda") == (
+        ["TECH", "FAANG"],
+        ["GOOG", "NVDA"],
+    )
+    assert parse_theme_spec("TECH:FAANG:") == (["TECH", "FAANG"], [])
+
+
+def test_parse_theme_spec_requires_separator():
+    from stock_stalker.repository import parse_theme_spec
+
+    with pytest.raises(ValueError):
+        parse_theme_spec("TECH")
+
+
+def test_set_theme_subfolder(tmp_path):
+    core, _ = make_theme_core(tmp_path, tickers=["GOOG", "NVDA"])
+    core.set_theme(["TECH", "FAANG"], ["GOOG", "NVDA"])
+    assert core.themes == {"TECH/FAANG": ["GOOG", "NVDA"]}
+    assert set(core.tickers_list) == {"GOOG", "NVDA"}
+
+
+def test_append_creates_and_deduplicates(tmp_path):
+    core, _ = make_theme_core(tmp_path)
+    core.append_to_theme(["TECH", "FAANG"], ["GOOG"])
+    assert core.themes == {"TECH/FAANG": ["GOOG"]}
+    core.append_to_theme(["TECH", "FAANG"], ["GOOG", "NVDA"])
+    assert core.themes == {"TECH/FAANG": ["GOOG", "NVDA"]}
+
+
+def test_append_enforces_single_membership(tmp_path):
+    core, _ = make_theme_core(tmp_path)
+    core.append_to_theme(["TECH", "FAANG"], ["GOOG", "NVDA"])
+    core.append_to_theme(["TECH", "SEMI"], ["NVDA"])
+    assert core.themes == {"TECH/FAANG": ["GOOG"], "TECH/SEMI": ["NVDA"]}
+
+
+def test_delete_theme_removes_subtree(tmp_path):
+    core, _ = make_theme_core(tmp_path)
+    core.set_theme(["TECH", "FAANG"], ["GOOG"])
+    core.set_theme(["TECH", "SEMI"], ["NVDA"])
+    core.set_theme(["BANK"], ["JPM"])
+    core.delete_theme(["TECH"])
+    assert set(core.themes) == {"BANK"}
+
+
+def test_get_grouped_symbols_nested(tmp_path):
+    from stock_stalker.models import ThemeTree
+
+    core, _ = make_theme_core(
+        tmp_path, tickers=["MSFT", "GOOG", "NVDA", "JPM"]
+    )
+    core.set_theme(["TECH"], ["MSFT"])
+    core.set_theme(["TECH", "FAANG"], ["GOOG", "NVDA"])
+    core.set_theme(["BANK"], ["JPM"])
+    groups = core.get_grouped_symbols()
+    assert [g.name for g in groups] == ["TECH", "BANK"]
+    tech = groups[0]
+    assert tech.symbols == ["MSFT"]
+    assert tech.children == [ThemeTree(name="FAANG", symbols=["GOOG", "NVDA"])]
+
+
+def test_group_quotes_nested(tmp_path):
+    from stock_stalker.models import TickerQuote
+
+    core, _ = make_theme_core(tmp_path)
+    core.set_theme(["TECH"], ["MSFT"])
+    core.set_theme(["TECH", "FAANG"], ["GOOG", "NVDA"])
+    quotes = [
+        TickerQuote(symbol=s, average=1.0) for s in ("MSFT", "GOOG", "NVDA", "TSLA")
+    ]
+    groups = core.group_quotes(quotes)
+    assert groups[0].theme == "TECH"
+    assert [q.symbol for q in groups[0].quotes] == ["MSFT"]
+    assert groups[0].children[0].theme == "FAANG"
+    assert [q.symbol for q in groups[0].children[0].quotes] == ["GOOG", "NVDA"]
+    assert groups[-1].theme is None
+    assert [q.symbol for q in groups[-1].quotes] == ["TSLA"]
+
+
+def test_cli_renders_subthemes():
+    import io
+
+    from rich.console import Console
+
+    from stock_stalker.models import ThemeGroup, TickerQuote
+
+    stream = io.StringIO()
+    cli = CLI(interval=60, period="1mo", console=Console(file=stream, width=140))
+    groups = [
+        ThemeGroup(
+            theme="TECH",
+            quotes=[TickerQuote(symbol="MSFT", average=1.0)],
+            children=[
+                ThemeGroup(
+                    theme="FAANG",
+                    quotes=[TickerQuote(symbol="GOOG", average=1.0)],
+                )
+            ],
+        )
+    ]
+    cli.display_grouped_data(groups)
+    out = stream.getvalue()
+    assert "TECH" in out and "FAANG" in out
+    assert "MSFT" in out and "GOOG" in out
+    assert "▸ FAANG" in out
+
+
+def test_theme_append_flag_wiring(monkeypatch):
+    from stock_stalker import main as main_module
+
+    calls = []
+
+    def _fake_init(self, period="1y", **kwargs):
+        self._period = period
+        self._tickers = []
+        self._themes = {"TECH/FAANG": ["GOOG"]}
+
+    monkeypatch.setattr(main_module.Core, "__init__", _fake_init)
+    monkeypatch.setattr(
+        main_module.Core,
+        "append_to_theme",
+        lambda self, path, members: calls.append((list(path), list(members))),
+    )
+    monkeypatch.setattr(main_module.CLI, "display_live_grouped", lambda *a, **k: None)
+    main_module.main(["--theme-append", "TECH:FAANG:GOOG,NVDA"])
+    assert calls == [(["TECH", "FAANG"], ["GOOG", "NVDA"])]
