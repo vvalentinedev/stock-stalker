@@ -25,7 +25,7 @@ class TableRenderer:
         labels = PERIOD_LABELS[period]
         table = self._table(labels)
         for quote in quotes:
-            table.add_row(*self._row(quote, labels))
+            table.add_row(*self._row(quote, labels, period=period))
         return table
 
     def build_grouped(self, groups: list[ThemeGroup], period: str) -> Table:
@@ -47,7 +47,7 @@ class TableRenderer:
                 table.add_row(*self._theme_header(group, len(labels)))
                 first = False
             for quote in group.quotes:
-                table.add_row(*self._row(quote, labels, indent=not flat))
+                table.add_row(*self._row(quote, labels, indent=not flat, period=period))
         return table
 
     def build_loading(self, symbols: list[str], period: str) -> Table:
@@ -116,7 +116,11 @@ class TableRenderer:
         return cells
 
     def _row(
-        self, quote: TickerQuote, labels: tuple[str, ...], indent: bool = False
+        self,
+        quote: TickerQuote,
+        labels: tuple[str, ...],
+        indent: bool = False,
+        period: str | None = None,
     ) -> list[Text | str]:
         symbol_text = f"  {quote.symbol}" if indent else quote.symbol
         if quote.error is not None or self._is_nan(quote.average):
@@ -136,7 +140,14 @@ class TableRenderer:
                 cells.append(Text("N/A", style="dim"))
             else:
                 style = "green" if value >= 0 else "red"
-                cells.append(Text(f"{value:.2f}%", style=style))
+                text = f"{value:.2f}%"
+                if (
+                    period is not None
+                    and label == period
+                    and quote.window_truncated
+                ):
+                    text += "*"
+                cells.append(Text(text, style=style))
         return cells
 
     @staticmethod
@@ -181,13 +192,32 @@ class CLI:
     def render_grouped(self, groups: list[ThemeGroup]) -> Table:
         return self._renderer.build_grouped(groups, self.period)
 
+    def _print_footnotes(self, quotes: list[TickerQuote]) -> None:
+        for quote in quotes:
+            if quote.error is not None:
+                self._console.print(
+                    f"{quote.symbol}: N/A ({quote.error})", style="dim"
+                )
+                continue
+            if quote.coverage_start is None:
+                continue
+            when = quote.coverage_start.strftime("%Y-%m-%d")
+            if self.period == "max":
+                self._console.print(
+                    f"{quote.symbol}: history available since {when}", style="dim"
+                )
+            elif quote.window_truncated:
+                self._console.print(
+                    f"{quote.symbol}: {self.period} window limited to available "
+                    f"history since {when}",
+                    style="dim",
+                )
+
     def display_stock_data(self, quotes: list[TickerQuote]) -> None:
         if self.clear:
             self._console.clear()
         self._console.print(self.render(quotes))
-        errors = [q for q in quotes if q.error is not None]
-        for quote in errors:
-            self._console.print(f"{quote.symbol}: N/A ({quote.error})", style="dim")
+        self._print_footnotes(quotes)
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"
@@ -197,12 +227,7 @@ class CLI:
         if self.clear:
             self._console.clear()
         self._console.print(self.render_grouped(groups))
-        for group in groups:
-            for quote in group.quotes:
-                if quote.error is not None:
-                    self._console.print(
-                        f"{quote.symbol}: N/A ({quote.error})", style="dim"
-                    )
+        self._print_footnotes([q for group in groups for q in group.quotes])
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"
@@ -229,9 +254,7 @@ class CLI:
         with Live(loading, console=self._console, refresh_per_second=4) as live:
             quotes = loader()
             live.update(self._renderer.build(quotes, self.period))
-        for quote in quotes:
-            if quote.error is not None:
-                self._console.print(f"{quote.symbol}: N/A ({quote.error})", style="dim")
+        self._print_footnotes(quotes)
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"
@@ -260,12 +283,7 @@ class CLI:
         with Live(loading, console=self._console, refresh_per_second=4) as live:
             groups = loader()
             live.update(self._renderer.build_grouped(groups, self.period))
-        for group in groups:
-            for quote in group.quotes:
-                if quote.error is not None:
-                    self._console.print(
-                        f"{quote.symbol}: N/A ({quote.error})", style="dim"
-                    )
+        self._print_footnotes([q for group in groups for q in group.quotes])
         if self.watch:
             self._console.print(
                 f"\nNext update in {self.interval} seconds...", style="dim"

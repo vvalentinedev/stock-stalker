@@ -1,16 +1,49 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal
 
-Period = Literal["5d", "1mo", "ytd", "1y", "5y"]
+Period = Literal[
+    "5d", "1mo", "ytd", "1y", "2y", "5y", "10y", "15y", "20y", "25y", "max"
+]
 
-VALID_PERIODS: tuple[str, ...] = ("5d", "1mo", "ytd", "1y", "5y")
+PERIOD_ORDER: tuple[str, ...] = (
+    "5d",
+    "1mo",
+    "ytd",
+    "1y",
+    "2y",
+    "5y",
+    "10y",
+    "15y",
+    "20y",
+    "25y",
+    "max",
+)
+
+VALID_PERIODS: tuple[str, ...] = PERIOD_ORDER
+
+# Bounded set of quick-glance change columns. The selected window is appended
+# as its own column whenever it is not already part of this ladder, so long
+# windows keep their baseline columns and add a single extra column.
+BASE_LADDER: tuple[str, ...] = ("5d", "1mo", "ytd", "1y", "5y")
+
+_PERIOD_RANK: dict[str, int] = {p: i for i, p in enumerate(PERIOD_ORDER)}
+
+
+def period_labels(period: str) -> tuple[str, ...]:
+    if period not in _PERIOD_RANK:
+        raise ValueError(
+            f"invalid period {period!r}, expected one of {VALID_PERIODS}"
+        )
+    rank = _PERIOD_RANK[period]
+    labels = tuple(p for p in BASE_LADDER if _PERIOD_RANK[p] <= rank)
+    if period not in BASE_LADDER:
+        labels = (*labels, period)
+    return labels
+
 
 PERIOD_LABELS: dict[str, tuple[str, ...]] = {
-    "5d": ("5d",),
-    "1mo": ("5d", "1mo"),
-    "ytd": ("5d", "1mo", "ytd"),
-    "1y": ("5d", "1mo", "ytd", "1y"),
-    "5y": ("5d", "1mo", "ytd", "1y", "5y"),
+    p: period_labels(p) for p in VALID_PERIODS
 }
 
 
@@ -20,6 +53,8 @@ class TickerQuote:
     average: float
     changes: dict[str, float] = field(default_factory=dict)
     error: str | None = None
+    coverage_start: datetime | None = None
+    window_truncated: bool = False
 
 
 @dataclass(frozen=True)

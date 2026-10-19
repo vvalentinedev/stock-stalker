@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .models import PERIOD_LABELS, VALID_PERIODS, Period, ThemeGroup, TickerQuote
@@ -13,6 +13,18 @@ from .repository import (
 __all__ = ["Core", "PERIOD_LABELS", "VALID_PERIODS", "Period"]
 
 TRADING_DAYS: dict[str, int] = {"5d": 5, "1mo": 21, "1y": 252}
+
+PERIOD_YEARS: dict[str, int] = {
+    "1y": 1,
+    "2y": 2,
+    "5y": 5,
+    "10y": 10,
+    "15y": 15,
+    "20y": 20,
+    "25y": 25,
+}
+
+COVERAGE_TOLERANCE: timedelta = timedelta(days=14)
 
 
 class Core:
@@ -225,7 +237,59 @@ class Core:
                 changes[label] = self._pct_change(current, ref)
             except (KeyError, IndexError, ValueError, ZeroDivisionError):
                 continue
-        return TickerQuote(symbol=symbol, average=current, changes=changes)
+        coverage_start, truncated = self._coverage(hist, period, now)
+        return TickerQuote(
+            symbol=symbol,
+            average=current,
+            changes=changes,
+            coverage_start=coverage_start,
+            window_truncated=truncated,
+        )
+
+    def _coverage(
+        self, hist: object, period: str, now: datetime
+    ) -> tuple[datetime | None, bool]:
+        index = getattr(hist, "index", None)
+        if index is None or len(index) == 0:
+            return None, False
+        start = self._as_naive_datetime(index[0])
+        if start is None:
+            return None, False
+        expected = self._window_expected_start(period, now)
+        truncated = expected is not None and start > expected + COVERAGE_TOLERANCE
+        return start, truncated
+
+    def _window_expected_start(
+        self, period: str, now: datetime
+    ) -> datetime | None:
+        if period == "max":
+            return None
+        if period == "ytd":
+            return datetime(now.year, 1, 1)
+        if period == "5d":
+            return now - timedelta(days=7)
+        if period == "1mo":
+            return now - timedelta(days=31)
+        years = PERIOD_YEARS.get(period)
+        if years is not None:
+            return self._years_ago(now, years)
+        return None
+
+    @staticmethod
+    def _years_ago(now: datetime, years: int) -> datetime:
+        try:
+            return now.replace(year=now.year - years)
+        except ValueError:
+            return now.replace(year=now.year - years, day=28)
+
+    @staticmethod
+    def _as_naive_datetime(value: object) -> datetime | None:
+        ts = value
+        if hasattr(ts, "to_pydatetime"):
+            ts = ts.to_pydatetime()  # type: ignore[union-attr]
+        if isinstance(ts, datetime):
+            return ts.replace(tzinfo=None) if ts.tzinfo is not None else ts
+        return None
 
     def _last_valid_index(self, hist: object, start: int) -> int:
         for idx in range(start, -1, -1):
@@ -249,8 +313,26 @@ class Core:
             return 0
         if label == "ytd":
             return self._ytd_start_index(hist, last_idx, now)
-        lookback = TRADING_DAYS[label]
-        return max(0, last_idx - lookback)
+        lookback = TRADING_DAYS.get(label)
+        if lookback is not None:
+            return max(0, last_idx - lookback)
+        years = PERIOD_YEARS.get(label)
+        if years is not None:
+            return self._dated_reference_index(hist, years, last_idx, now)
+        return 0
+
+    def _dated_reference_index(
+        self, hist: object, years: int, last_idx: int, now: datetime
+    ) -> int:
+        expected = self._years_ago(now, years)
+        index = getattr(hist, "index", None)
+        if index is None:
+            return 0
+        for i in range(last_idx + 1):
+            when = self._as_naive_datetime(index[i])
+            if when is not None and when >= expected:
+                return i
+        return 0
 
     def _ytd_start_index(self, hist: object, last_idx: int, now: datetime) -> int:
         try:

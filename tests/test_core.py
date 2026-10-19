@@ -61,7 +61,101 @@ def make_core(tmp_path, period="1y", frames=None):
 
 def test_invalid_period_rejected(tmp_path):
     with pytest.raises(ValueError):
-        make_core(tmp_path, period="10y")
+        make_core(tmp_path, period="100y")
+
+
+def test_extended_period_labels():
+    from stock_stalker.models import PERIOD_LABELS, period_labels
+
+    assert period_labels("5d") == ("5d",)
+    assert period_labels("1y") == ("5d", "1mo", "ytd", "1y")
+    assert period_labels("5y") == ("5d", "1mo", "ytd", "1y", "5y")
+    assert period_labels("10y") == ("5d", "1mo", "ytd", "1y", "5y", "10y")
+    assert period_labels("25y") == ("5d", "1mo", "ytd", "1y", "5y", "25y")
+    assert period_labels("max") == ("5d", "1mo", "ytd", "1y", "5y", "max")
+    assert set(PERIOD_LABELS) == {
+        "5d",
+        "1mo",
+        "ytd",
+        "1y",
+        "2y",
+        "5y",
+        "10y",
+        "15y",
+        "20y",
+        "25y",
+        "max",
+    }
+
+
+def test_window_kwargs_period_vs_start():
+    from stock_stalker.provider import YFinanceProvider
+
+    assert YFinanceProvider._window_kwargs("5y") == {"period": "5y"}
+    assert YFinanceProvider._window_kwargs("max") == {"period": "max"}
+    kwargs = YFinanceProvider._window_kwargs("25y")
+    assert set(kwargs) == {"start"}
+    datetime.strptime(kwargs["start"], "%Y-%m-%d")
+
+
+def test_long_window_truncated_marked(tmp_path):
+    frames = {"YOUNG": FakeHist([100.0] * 3, [100.0] * 3)}
+    core, _, _ = make_core(tmp_path, period="25y", frames=frames)
+    core.set_ticker_list(["YOUNG"])
+    quote = core.get_quotes()[0]
+    assert quote.window_truncated is True
+    assert quote.coverage_start is not None
+
+
+def test_long_window_keeps_5y_column(tmp_path):
+    years = list(range(2016, 2027))
+    highs = [100.0] * len(years)
+    lows = [100.0] * len(years)
+    highs[-1] = lows[-1] = 200.0
+    frames = {"AAPL": FakeHist(highs, lows, years=years)}
+    core, _, _ = make_core(tmp_path, period="10y", frames=frames)
+    core.set_ticker_list(["AAPL"])
+    quote = core.get_quotes()[0]
+    assert "5y" in quote.changes
+    assert "10y" in quote.changes
+    assert quote.changes["10y"] == 100.0
+    assert quote.changes["5y"] == 100.0
+
+
+def test_full_coverage_not_truncated(tmp_path):
+    years = [2020, 2025, 2026]
+    frames = {"OLD": FakeHist([100.0] * 3, [100.0] * 3, years=years)}
+    core, _, _ = make_core(tmp_path, period="1y", frames=frames)
+    core.set_ticker_list(["OLD"])
+    quote = core.get_quotes()[0]
+    assert quote.window_truncated is False
+
+
+def test_cli_shows_window_coverage():
+    import io
+    from datetime import datetime as dt
+
+    from rich.console import Console
+
+    from stock_stalker.models import TickerQuote
+
+    stream = io.StringIO()
+    cli = CLI(interval=60, period="25y", console=Console(file=stream, width=140))
+    cli.display_stock_data(
+        [
+            TickerQuote(
+                symbol="AAPL",
+                average=10.0,
+                changes={"5d": 1.0, "1mo": 2.0, "ytd": 3.0, "1y": 4.0, "25y": 5.0},
+                coverage_start=dt(2015, 6, 1),
+                window_truncated=True,
+            )
+        ]
+    )
+    out = stream.getvalue()
+    assert "5.00%*" in out
+    assert "25y window limited" in out
+    assert "2015-06-01" in out
 
 
 def test_tickers_not_shared_between_instances(tmp_path):
@@ -159,7 +253,7 @@ def test_cli_validates_args():
     with pt.raises(ValueError):
         CLI(interval=0, period="1mo")
     with pt.raises(ValueError):
-        CLI(interval=60, period="10y")
+        CLI(interval=60, period="100y")
 
 
 def test_cli_does_not_clear_by_default():
@@ -211,7 +305,7 @@ def test_bad_period_exits_with_error(capsys):
     from stock_stalker.main import build_parser
 
     with pt.raises(SystemExit) as exc:
-        build_parser().parse_args(["--period", "10y"])
+        build_parser().parse_args(["--period", "100y"])
     assert exc.value.code == 2
 
 
